@@ -1,9 +1,38 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+function getAuthToken(): string | null {
+  try {
+    const authStorage = localStorage.getItem("auth-storage");
+    if (authStorage) {
+      const parsed = JSON.parse(authStorage);
+      return parsed.state?.accessToken || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let errorMessage = res.statusText;
+    try {
+      const json = await res.json();
+      errorMessage = json.message || errorMessage;
+    } catch {
+      const text = await res.text();
+      if (text) errorMessage = text;
+    }
+    throw new Error(errorMessage);
   }
 }
 
@@ -12,9 +41,17 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...getAuthHeaders(),
+  };
+
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -29,8 +66,11 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = queryKey[0] as string;
+    
+    const res = await fetch(url, {
       credentials: "include",
+      headers: getAuthHeaders(),
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
@@ -47,7 +87,7 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      staleTime: 5 * 60 * 1000, // 5 minutes
       retry: false,
     },
     mutations: {

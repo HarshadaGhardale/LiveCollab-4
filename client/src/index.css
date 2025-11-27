@@ -43,9 +43,9 @@
   --chart-3: 280 65% 35%;
   --chart-4: 38 92% 40%;
   --chart-5: 340 82% 38%;
-  --font-sans: Open Sans, sans-serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
   --font-serif: Georgia, serif;
-  --font-mono: Menlo, monospace;
+  --font-mono: 'JetBrains Mono', monospace;
   --radius: .5rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
@@ -285,4 +285,79 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+}
+
+/* React Split styles */
+.gutter {
+  background-color: hsl(var(--border));
+  background-repeat: no-repeat;
+  background-position: 50%;
+  transition: background-color 0.15s ease;
+}
+
+.gutter:hover {
+  background-color: hsl(var(--primary) / 0.5);
+}
+
+.gutter.gutter-horizontal {
+  cursor: col-resize;
+  width: 8px !important;
+  margin: 0 -4px;
+  z-index: 10;
+}
+
+.gutter.gutter-vertical {
+  cursor: row-resize;
+  height: 8px !important;
+  margin: -4px 0;
+  z-index: 10;
+}
+
+/* Monaco editor overrides */
+.monaco-editor {
+  border-radius: 0 0 0.375rem 0.375rem;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Custom animation classes */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { 
+    opacity: 0; 
+    transform: translateY(10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
 }
