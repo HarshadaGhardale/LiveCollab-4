@@ -155,8 +155,8 @@ export async function registerRoutes(
     socket.on("whiteboard:event", async ({ roomId, event }) => {
       if (!roomId || userData.roomId !== roomId) return;
 
-      // Broadcast to others in room
-      socket.to(roomId).emit("whiteboard:event", event);
+      // Broadcast to all users in room (including sender)
+      io.to(roomId).emit("whiteboard:event", event);
 
       // Save state if it's a significant change
       if (event.type === "object-modified" || event.type === "object-added" || event.type === "clear") {
@@ -174,8 +174,8 @@ export async function registerRoutes(
     socket.on("code:event", async ({ roomId, event }) => {
       if (!roomId || userData.roomId !== roomId) return;
 
-      // Broadcast to others in room
-      socket.to(roomId).emit("code:event", event);
+      // Broadcast to all users in room (including sender)
+      io.to(roomId).emit("code:event", event);
 
       // Save code content
       if (event.type === "change") {
@@ -590,6 +590,73 @@ export async function registerRoutes(
       res.json(members);
     } catch (error) {
       console.error("Get members error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Execute code
+  app.post("/api/execute-code", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { code, language } = req.body;
+
+      if (!code) {
+        res.status(400).json({ message: "Code is required" });
+        return;
+      }
+
+      // Only support JavaScript/Node.js execution for security
+      if (language && language !== "javascript" && language !== "js") {
+        res.status(400).json({ message: "Only JavaScript execution is supported" });
+        return;
+      }
+
+      // Create a safe execution environment
+      const output: string[] = [];
+      const errors: string[] = [];
+      let result: any = null;
+
+      try {
+        // Override console to capture output
+        const customConsole = {
+          log: (...args: any[]) => {
+            output.push(args.map((arg) => {
+              if (typeof arg === "object") {
+                return JSON.stringify(arg, null, 2);
+              }
+              return String(arg);
+            }).join(" "));
+          },
+          error: (...args: any[]) => {
+            errors.push(args.map((arg) => String(arg)).join(" "));
+          },
+          warn: (...args: any[]) => {
+            output.push("[WARN] " + args.map((arg) => String(arg)).join(" "));
+          },
+          info: (...args: any[]) => {
+            output.push("[INFO] " + args.map((arg) => String(arg)).join(" "));
+          },
+        };
+
+        // Create isolated function and execute
+        const asyncFn = new Function("console", `return (async () => { ${code} })()`);
+        result = await asyncFn(customConsole);
+
+        res.json({
+          success: true,
+          output: output.join("\n"),
+          result: result,
+          errors: errors.length > 0 ? errors.join("\n") : null,
+        });
+      } catch (executionError) {
+        errors.push(String(executionError));
+        res.json({
+          success: false,
+          output: output.join("\n"),
+          errors: errors.join("\n"),
+        });
+      }
+    } catch (error) {
+      console.error("Execute code error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

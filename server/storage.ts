@@ -508,7 +508,7 @@ export class MongoDBStorage implements IStorage {
 
   // Refresh token operations
   async saveRefreshToken(userId: string, token: string): Promise<void> {
-    await RefreshTokenModel.updateOne({ userId }, { _id: randomUUID(), userId, token }, { upsert: true });
+    await RefreshTokenModel.updateOne({ userId }, { $set: { token } }, { upsert: true });
   }
 
   async getRefreshToken(userId: string): Promise<string | undefined> {
