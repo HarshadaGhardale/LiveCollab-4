@@ -13,7 +13,8 @@ import {
   AlertCircle,
   PanelLeft,
   Code2,
-  Brush
+  Brush,
+  Menu
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -25,6 +26,7 @@ import { Whiteboard } from "@/components/collaboration/whiteboard";
 import { CodeEditor } from "@/components/collaboration/code-editor";
 import { VideoChat } from "@/components/collaboration/video-chat";
 import { ActiveUsersList, PresenceOverlay } from "@/components/collaboration/presence-overlay";
+import { MembersPanel } from "@/components/collaboration/members-panel";
 import { 
   getSocket, 
   connectSocket, 
@@ -44,6 +46,7 @@ export default function Room() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const [showMembers, setShowMembers] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   // Redirect if not authenticated
@@ -240,6 +243,21 @@ export default function Room() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                variant={showMembers ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setShowMembers(!showMembers)}
+                className="gap-2"
+                data-testid="button-show-members"
+              >
+                <Users className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{presence.size}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Show members</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={handleCopyLink}
@@ -295,63 +313,75 @@ export default function Room() {
       </div>
 
       {/* Main workspace */}
-      <main 
-        ref={workspaceRef}
-        className="flex-1 relative overflow-hidden"
-        onMouseMove={handleMouseMove}
-      >
-        {/* Presence overlay */}
-        <PresenceOverlay 
-          presence={presence} 
-          currentUserId={user?.id || ""} 
-          containerRef={workspaceRef}
-        />
-
-        {/* Split view */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="h-full p-2"
+      <div className="flex-1 flex overflow-hidden">
+        <main 
+          ref={workspaceRef}
+          className="flex-1 relative overflow-hidden"
+          onMouseMove={handleMouseMove}
         >
-          {activePanel === "both" ? (
-            <Split
-              className="flex h-full"
-              sizes={[50, 50]}
-              minSize={200}
-              gutterSize={8}
-              gutterAlign="center"
-              cursor="col-resize"
-            >
-              <div className="h-full overflow-hidden">
+          {/* Presence overlay */}
+          <PresenceOverlay 
+            presence={presence} 
+            currentUserId={user?.id || ""} 
+            containerRef={workspaceRef}
+          />
+
+          {/* Split view */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="h-full p-2"
+          >
+            {activePanel === "both" ? (
+              <Split
+                className="flex h-full"
+                sizes={[50, 50]}
+                minSize={200}
+                gutterSize={8}
+                gutterAlign="center"
+                cursor="col-resize"
+              >
+                <div className="h-full overflow-hidden">
+                  <CodeEditor 
+                    roomId={room.id} 
+                    initialContent={roomState?.codeContent}
+                  />
+                </div>
+                <div className="h-full overflow-hidden">
+                  <Whiteboard 
+                    roomId={room.id}
+                    initialData={roomState?.whiteboardData}
+                  />
+                </div>
+              </Split>
+            ) : activePanel === "editor" ? (
+              <div className="h-full">
                 <CodeEditor 
-                  roomId={room.id} 
+                  roomId={room.id}
                   initialContent={roomState?.codeContent}
                 />
               </div>
-              <div className="h-full overflow-hidden">
+            ) : (
+              <div className="h-full">
                 <Whiteboard 
                   roomId={room.id}
                   initialData={roomState?.whiteboardData}
                 />
               </div>
-            </Split>
-          ) : activePanel === "editor" ? (
-            <div className="h-full">
-              <CodeEditor 
-                roomId={room.id}
-                initialContent={roomState?.codeContent}
-              />
-            </div>
-          ) : (
-            <div className="h-full">
-              <Whiteboard 
-                roomId={room.id}
-                initialData={roomState?.whiteboardData}
-              />
-            </div>
-          )}
-        </motion.div>
-      </main>
+            )}
+          </motion.div>
+        </main>
+
+        {/* Members Panel */}
+        {showMembers && (
+          <MembersPanel 
+            members={Array.from(presence.values())}
+            currentUserId={user?.id || ""}
+            roomOwnerId={room?.ownerId}
+            onClose={() => setShowMembers(false)}
+          />
+        )}
+      </div>
 
       {/* Video chat */}
       <VideoChat roomId={room.id} participants={participants} />
