@@ -1,7 +1,13 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { useAuthStore } from "./stores";
 
 function getAuthToken(): string | null {
   try {
+    // First try to get from Zustand store (faster)
+    const token = useAuthStore.getState().accessToken;
+    if (token) return token;
+    
+    // Fallback to localStorage
     const authStorage = localStorage.getItem("auth-storage");
     if (authStorage) {
       const parsed = JSON.parse(authStorage);
