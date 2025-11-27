@@ -11,6 +11,7 @@ import type {
   RoomWithMemberCount
 } from "@shared/schema";
 import { AVATAR_COLORS } from "@shared/schema";
+import { UserModel, RoomModel, RoomStateModel, MembershipModel, RefreshTokenModel } from "./mongodb";
 
 export interface IStorage {
   // User operations
@@ -304,4 +305,228 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// MongoDB Storage Implementation
+export class MongoDBStorage implements IStorage {
+  private generateSlug(name: string): string {
+    const baseSlug = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    return baseSlug;
+  }
+
+  // User operations
+  async getUser(id: string): Promise<User | undefined> {
+    const user = await UserModel.findById(id).lean();
+    if (!user) return undefined;
+    return { id: user._id as string, ...user };
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const user = await UserModel.findOne({ email: email.toLowerCase() }).lean();
+    if (!user) return undefined;
+    return { id: user._id as string, ...user };
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const user = await UserModel.findOne({ username: username.toLowerCase() }).lean();
+    if (!user) return undefined;
+    return { id: user._id as string, ...user };
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const id = randomUUID();
+    const passwordHash = await bcrypt.hash(insertUser.password, 10);
+    const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+    
+    const user = await UserModel.create({
+      _id: id,
+      username: insertUser.username.toLowerCase(),
+      email: insertUser.email.toLowerCase(),
+      passwordHash,
+      avatarColor,
+      createdAt: new Date().toISOString(),
+    });
+
+    return { id: user._id as string, username: user.username, email: user.email, passwordHash: user.passwordHash, avatarColor: user.avatarColor, createdAt: user.createdAt };
+  }
+
+  async getPublicUser(id: string): Promise<PublicUser | undefined> {
+    const user = await UserModel.findById(id).lean();
+    if (!user) return undefined;
+    const { passwordHash, ...publicUser } = user;
+    return { id: user._id as string, ...publicUser };
+  }
+
+  // Room operations
+  async getRoom(id: string): Promise<Room | undefined> {
+    const room = await RoomModel.findById(id).lean();
+    if (!room) return undefined;
+    return { id: room._id as string, slug: room.slug, name: room.name, ownerId: room.ownerId, isPrivate: room.isPrivate, createdAt: room.createdAt, lastActiveAt: room.lastActiveAt };
+  }
+
+  async getRoomBySlug(slug: string): Promise<Room | undefined> {
+    const room = await RoomModel.findOne({ slug: slug.toLowerCase() }).lean();
+    if (!room) return undefined;
+    return { id: room._id as string, slug: room.slug, name: room.name, ownerId: room.ownerId, isPrivate: room.isPrivate, createdAt: room.createdAt, lastActiveAt: room.lastActiveAt };
+  }
+
+  async createRoom(insertRoom: InsertRoom, ownerId: string): Promise<Room> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const slug = insertRoom.slug || this.generateSlug(insertRoom.name);
+
+    const room = await RoomModel.create({
+      _id: id,
+      slug: slug.toLowerCase(),
+      name: insertRoom.name,
+      ownerId,
+      isPrivate: insertRoom.isPrivate || false,
+      createdAt: now,
+      lastActiveAt: now,
+    });
+
+    await RoomStateModel.create({
+      _id: randomUUID(),
+      roomId: id,
+      whiteboardData: "{}",
+      codeContent: "// Start coding here...\n",
+      codeLanguage: "javascript",
+      lastUpdatedAt: now,
+    });
+
+    await this.createMembership(ownerId, id, "owner");
+
+    return { id: room._id as string, slug: room.slug, name: room.name, ownerId: room.ownerId, isPrivate: room.isPrivate, createdAt: room.createdAt, lastActiveAt: room.lastActiveAt };
+  }
+
+  async updateRoom(id: string, updates: Partial<Room>): Promise<Room | undefined> {
+    const room = await RoomModel.findByIdAndUpdate(id, updates, { new: true }).lean();
+    if (!room) return undefined;
+    return { id: room._id as string, slug: room.slug, name: room.name, ownerId: room.ownerId, isPrivate: room.isPrivate, createdAt: room.createdAt, lastActiveAt: room.lastActiveAt };
+  }
+
+  async deleteRoom(id: string): Promise<boolean> {
+    const room = await RoomModel.findByIdAndDelete(id);
+    if (!room) return false;
+    await RoomStateModel.deleteOne({ roomId: id });
+    await MembershipModel.deleteMany({ roomId: id });
+    return true;
+  }
+
+  async getRoomsForUser(userId: string): Promise<RoomWithMemberCount[]> {
+    const memberships = await MembershipModel.find({ userId }).lean();
+    const rooms: RoomWithMemberCount[] = [];
+
+    for (const membership of memberships) {
+      const room = await RoomModel.findById(membership.roomId).lean();
+      if (room) {
+        const memberCount = await MembershipModel.countDocuments({ roomId: room._id });
+        rooms.push({
+          id: room._id as string,
+          slug: room.slug,
+          name: room.name,
+          ownerId: room.ownerId,
+          isPrivate: room.isPrivate,
+          createdAt: room.createdAt,
+          lastActiveAt: room.lastActiveAt,
+          memberCount,
+          isOwner: room.ownerId === userId,
+        });
+      }
+    }
+
+    rooms.sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime());
+    return rooms;
+  }
+
+  // Room state operations
+  async getRoomState(roomId: string): Promise<RoomState | undefined> {
+    const state = await RoomStateModel.findOne({ roomId }).lean();
+    if (!state) return undefined;
+    return { roomId: state.roomId, whiteboardData: state.whiteboardData, codeContent: state.codeContent, codeLanguage: state.codeLanguage, lastUpdatedAt: state.lastUpdatedAt };
+  }
+
+  async updateRoomState(roomId: string, updates: Partial<RoomState>): Promise<RoomState> {
+    const now = new Date().toISOString();
+    const existing = await RoomStateModel.findOne({ roomId }).lean();
+
+    const state = await RoomStateModel.findOneAndUpdate(
+      { roomId },
+      {
+        whiteboardData: updates.whiteboardData || existing?.whiteboardData || "{}",
+        codeContent: updates.codeContent || existing?.codeContent || "// Start coding here...\n",
+        codeLanguage: updates.codeLanguage || existing?.codeLanguage || "javascript",
+        lastUpdatedAt: now,
+      },
+      { new: true, upsert: true }
+    ).lean();
+
+    await RoomModel.findByIdAndUpdate(roomId, { lastActiveAt: now });
+
+    return { roomId: state!.roomId, whiteboardData: state!.whiteboardData, codeContent: state!.codeContent, codeLanguage: state!.codeLanguage, lastUpdatedAt: state!.lastUpdatedAt };
+  }
+
+  // Membership operations
+  async getMembership(userId: string, roomId: string): Promise<Membership | undefined> {
+    const membership = await MembershipModel.findOne({ userId, roomId }).lean();
+    if (!membership) return undefined;
+    return { id: membership._id as string, userId: membership.userId, roomId: membership.roomId, role: membership.role, joinedAt: membership.joinedAt };
+  }
+
+  async getMembershipsForRoom(roomId: string): Promise<Membership[]> {
+    const memberships = await MembershipModel.find({ roomId }).lean();
+    return memberships.map((m) => ({ id: m._id as string, userId: m.userId, roomId: m.roomId, role: m.role, joinedAt: m.joinedAt }));
+  }
+
+  async getMembershipsForUser(userId: string): Promise<Membership[]> {
+    const memberships = await MembershipModel.find({ userId }).lean();
+    return memberships.map((m) => ({ id: m._id as string, userId: m.userId, roomId: m.roomId, role: m.role, joinedAt: m.joinedAt }));
+  }
+
+  async createMembership(userId: string, roomId: string, role: "owner" | "editor" | "viewer"): Promise<Membership> {
+    const id = randomUUID();
+    const membership = await MembershipModel.create({
+      _id: id,
+      userId,
+      roomId,
+      role,
+      joinedAt: new Date().toISOString(),
+    });
+
+    return { id: membership._id as string, userId: membership.userId, roomId: membership.roomId, role: membership.role, joinedAt: membership.joinedAt };
+  }
+
+  async deleteMembership(userId: string, roomId: string): Promise<boolean> {
+    const result = await MembershipModel.deleteOne({ userId, roomId });
+    return result.deletedCount > 0;
+  }
+
+  async getMemberCount(roomId: string): Promise<number> {
+    return await MembershipModel.countDocuments({ roomId });
+  }
+
+  // Refresh token operations
+  async saveRefreshToken(userId: string, token: string): Promise<void> {
+    await RefreshTokenModel.updateOne({ userId }, { _id: randomUUID(), userId, token }, { upsert: true });
+  }
+
+  async getRefreshToken(userId: string): Promise<string | undefined> {
+    const doc = await RefreshTokenModel.findOne({ userId }).lean();
+    return doc?.token;
+  }
+
+  async deleteRefreshToken(userId: string): Promise<void> {
+    await RefreshTokenModel.deleteOne({ userId });
+  }
+}
+
+// Create storage instance based on environment
+let storage: IStorage;
+if (process.env.MONGODB_URL) {
+  storage = new MongoDBStorage();
+} else {
+  storage = new MemStorage();
+}
+
+export { storage };

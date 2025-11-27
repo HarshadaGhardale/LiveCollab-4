@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { connectMongoDB } from "./mongodb";
 
 const app = express();
 const httpServer = createServer(app);
@@ -60,6 +61,15 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Connect to MongoDB if URL is provided
+  if (process.env.MONGODB_URL) {
+    try {
+      await connectMongoDB();
+    } catch (error) {
+      console.error("Failed to connect MongoDB, falling back to in-memory storage:", error);
+    }
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
