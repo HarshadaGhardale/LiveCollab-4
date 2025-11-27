@@ -24,7 +24,7 @@ interface IRoomDoc extends Omit<Room, 'id'>, Document {
 
 const roomSchema = new Schema<IRoomDoc>({
   _id: { type: String, required: true },
-  slug: { type: String, required: true, unique: true, lowercase: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, index: true },
   name: { type: String, required: true },
   ownerId: { type: String, required: true },
   isPrivate: { type: Boolean, default: false },
@@ -32,7 +32,6 @@ const roomSchema = new Schema<IRoomDoc>({
   lastActiveAt: { type: String, required: true },
 });
 
-roomSchema.index({ slug: 1 });
 export const RoomModel = mongoose.model<IRoomDoc>("Room", roomSchema);
 
 // RoomState Model
