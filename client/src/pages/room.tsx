@@ -55,7 +55,7 @@ export default function Room() {
 
   // Fetch room data
   const { data: room, isLoading, error } = useQuery<RoomWithMemberCount>({
-    queryKey: ["/api/rooms", slug],
+    queryKey: [`/api/rooms/${slug}`],
     enabled: !!slug && isAuthenticated,
   });
 
