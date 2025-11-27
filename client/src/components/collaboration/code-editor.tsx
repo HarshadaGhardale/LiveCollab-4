@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEditorStore, useThemeStore, useAuthStore } from "@/lib/stores";
-import { emitCodeEvent } from "@/lib/socket";
+import { emitCodeEvent, getSocket } from "@/lib/socket";
 import { CODE_LANGUAGES } from "@shared/schema";
 import type { editor } from "monaco-editor";
 
@@ -80,6 +80,17 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     }, 2000);
   }, [roomId, user?.id, onContentChange]);
 
+  const handleLanguageChange = useCallback((newLanguage: string) => {
+    setLanguage(newLanguage);
+    
+    // Emit language change to other users
+    emitCodeEvent(roomId, {
+      type: "language",
+      data: newLanguage,
+      userId: user?.id,
+    });
+  }, [roomId, user?.id, setLanguage]);
+
   const handleSave = useCallback(async (contentToSave?: string) => {
     setIsSaving(true);
     try {
@@ -109,13 +120,40 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     }
   }, [initialContent]);
 
+  // Listen for code events from other users
+  useEffect(() => {
+    const socket = getSocket();
+    const handleCodeEvent = (event: any) => {
+      if (event.userId === user?.id) return; // Ignore own events
+      
+      if (event.type === "language") {
+        setLanguage(event.data);
+      } else if (event.type === "change") {
+        setContent(event.data);
+        if (editorRef.current) {
+          const currentPosition = editorRef.current.getPosition();
+          editorRef.current.setValue(event.data);
+          if (currentPosition) {
+            editorRef.current.setPosition(currentPosition);
+          }
+        }
+      }
+    };
+
+    socket.on("code:event", handleCodeEvent);
+
+    return () => {
+      socket.off("code:event", handleCodeEvent);
+    };
+  }, [user?.id, setLanguage]);
+
   return (
     <div className="flex flex-col h-full bg-card rounded-md border overflow-hidden">
       {/* Header */}
       <div className="h-10 px-3 flex items-center justify-between gap-2 border-b bg-card shrink-0">
         <span className="text-sm font-medium">Code Editor</span>
         <div className="flex items-center gap-2">
-          <Select value={language} onValueChange={setLanguage}>
+          <Select value={language} onValueChange={handleLanguageChange}>
             <SelectTrigger className="h-7 w-28 text-xs" data-testid="select-language">
               <SelectValue />
             </SelectTrigger>

@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWhiteboardStore, useAuthStore } from "@/lib/stores";
-import { emitWhiteboardEvent } from "@/lib/socket";
+import { emitWhiteboardEvent, getSocket } from "@/lib/socket";
 import { DRAWING_TOOLS, COLOR_PALETTE, type DrawingTool } from "@shared/schema";
 
 const TOOL_ICONS: Record<string, any> = {
@@ -197,13 +197,36 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(container);
 
+    // Listen for whiteboard events from other users
+    const socket = getSocket();
+    const handleWhiteboardEvent = (event: any) => {
+      if (event.userId === user?.id) return; // Ignore own events
+      
+      if (event.type === "clear") {
+        canvas.clear();
+        canvas.backgroundColor = "#ffffff";
+        canvas.renderAll();
+      } else if (event.type === "object-modified" || event.type === "undo" || event.type === "redo") {
+        try {
+          canvas.loadFromJSON(JSON.parse(event.data)).then(() => {
+            canvas.renderAll();
+          });
+        } catch (e) {
+          console.error("Failed to sync whiteboard:", e);
+        }
+      }
+    };
+
+    socket.on("whiteboard:event", handleWhiteboardEvent);
+
     setIsReady(true);
 
     return () => {
       resizeObserver.disconnect();
+      socket.off("whiteboard:event", handleWhiteboardEvent);
       canvas.dispose();
     };
-  }, []);
+  }, [user?.id]);
 
   // Update brush settings
   useEffect(() => {
