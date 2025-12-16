@@ -15,9 +15,16 @@ import {
   Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuthStore, useUIStore } from "@/lib/stores";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getSocket, emitSignaling } from "@/lib/socket";
 
 interface Peer {
@@ -53,7 +60,9 @@ function ParticipantVideo({
 
   useEffect(() => {
     if (videoRef.current && stream) {
+      console.log(`Attaching stream ${stream.id} to video element for ${participant.username}`);
       videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.error("Error playing video:", e));
     }
   }, [stream]);
 
@@ -112,14 +121,21 @@ function ParticipantVideo({
 
       {/* Name overlay */}
       <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-white font-medium truncate">
-            {participant.username}
-            {isLocal && " (You)"}
-          </span>
-          {isMuted && (
-            <MicOff className="h-3 w-3 text-red-400" />
-          )}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white font-medium truncate">
+              {participant.username}
+              {isLocal && " (You)"}
+            </span>
+            {isMuted && (
+              <MicOff className="h-3 w-3 text-red-400" />
+            )}
+          </div>
+          {/* DEBUG INFO - REMOVE LATER IF NEEDED but helpful for user */}
+          <div className="text-[10px] text-white/70 font-mono">
+            {connectionStatus} | {stream ? `Str: ${stream.id.slice(0, 4)}` : "No Str"} |
+            {stream ? `V:${stream.getVideoTracks().length} A:${stream.getAudioTracks().length}` : ""}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -128,6 +144,7 @@ function ParticipantVideo({
 
 export function VideoChat({ roomId, participants }: VideoChatProps) {
   const { user } = useAuthStore();
+  const { toast } = useToast();
   const { videoBarVisible, toggleVideoBar } = useUIStore();
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
@@ -262,6 +279,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       console.log(`Initiating connection to ${username}`);
       let peer: SimplePeer.Instance;
       try {
+        // @ts-ignore
         peer = new SimplePeerConstructor({
           initiator: true,
           trickle: true,
@@ -315,6 +333,11 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
       peer.on("connect", () => {
         console.log(`Connected to peer: ${username}`);
+        toast({
+          title: "Connected",
+          description: `Video connected with ${username}`,
+          variant: "default",
+        });
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const existingPeer = newPeers.get(userId);
@@ -325,13 +348,18 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
       });
 
-      peer.on("stream", (stream) => {
-        console.log(`Received stream from: ${username}`);
+      peer.on("stream", (remoteStream) => {
+        console.log(`Received stream from ${username}: ${remoteStream.id}`);
+        console.log(`Tracks: Video=${remoteStream.getVideoTracks().length}, Audio=${remoteStream.getAudioTracks().length}`);
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const existingPeer = newPeers.get(userId);
           if (existingPeer) {
-            newPeers.set(userId, { ...existingPeer, stream });
+            newPeers.set(userId, {
+              ...existingPeer,
+              stream: remoteStream,
+              connectionStatus: "connected" // Stream = Success!
+            });
           }
           return newPeers;
         });
@@ -339,6 +367,11 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
       peer.on("error", (err) => {
         console.error(`Peer error with ${username}:`, err);
+        toast({
+          title: "Connection Error",
+          description: `Failed to connect with ${username}. Turn off/on video to retry.`,
+          variant: "destructive",
+        });
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const existingPeer = newPeers.get(userId);
@@ -369,7 +402,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       // console.log(`Received signal (${type}) from: ${from}`);
 
       if (!isJoinedRef.current || !localStreamRef.current) {
-        // Optionally queue this signal? 
+        // Optionally queue this signal?
         // For now, ignoring signals if we aren't in video mode is correct.
         return;
       }
@@ -380,6 +413,10 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         const avatarColor = participant?.avatarColor || "#000000";
 
         console.log(`Accepting offer from: ${username} (${from})`);
+        toast({
+          title: "Incoming Call",
+          description: `Defining connection from ${username}...`,
+        });
 
         // If we already have a peer for this user, destroy it?
         // simple-peer doesn't support re-negotiation easily if we just overwrite.
@@ -391,6 +428,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         let peer: SimplePeer.Instance;
         try {
+          // @ts-ignore
           peer = new SimplePeerConstructor({
             initiator: false,
             trickle: true,
@@ -440,6 +478,10 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.on("connect", () => {
           console.log(`Connected to peer (via offer): ${username}`);
+          toast({
+            title: "Connected",
+            description: `Video connected with ${username}`,
+          });
           setPeers((prev) => {
             const newPeers = new Map(prev);
             const existingPeer = newPeers.get(from);
@@ -450,13 +492,18 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           });
         });
 
-        peer.on("stream", (stream) => {
-          console.log(`Received stream from (via offer): ${username}`);
+        peer.on("stream", (remoteStream) => {
+          console.log(`Received stream from (via offer) ${username}: ${remoteStream.id}`);
+          console.log(`Tracks: Video=${remoteStream.getVideoTracks().length}, Audio=${remoteStream.getAudioTracks().length}`);
           setPeers((prev) => {
             const newPeers = new Map(prev);
             const existingPeer = newPeers.get(from);
             if (existingPeer) {
-              newPeers.set(from, { ...existingPeer, stream });
+              newPeers.set(from, {
+                ...existingPeer,
+                stream: remoteStream,
+                connectionStatus: "connected" // Stream = Success!
+              });
             }
             return newPeers;
           });
@@ -464,6 +511,11 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.on("error", (err) => {
           console.error(`Peer error with ${username}:`, err);
+          toast({
+            title: "Connection Error",
+            description: `Failed to connect to ${username}.`,
+            variant: "destructive",
+          });
           setPeers((prev) => {
             const newPeers = new Map(prev);
             const existingPeer = newPeers.get(from);
