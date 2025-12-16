@@ -110,14 +110,17 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
   const startLocalStream = useCallback(async () => {
     try {
+      console.log("Starting local stream...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
+      console.log("Got local stream:", stream.id);
       setLocalStream(stream);
       setIsJoined(true);
 
       // Notify others that we joined video chat
+      console.log("Emitting webrtc:join");
       getSocket().emit("webrtc:join", { roomId });
 
       return stream;
@@ -125,6 +128,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       console.error("Failed to get media devices:", error);
       // Try audio only
       try {
+        console.log("Retrying with audio only...");
         const audioStream = await navigator.mediaDevices.getUserMedia({
           video: false,
           audio: true,
@@ -134,6 +138,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         setIsJoined(true);
 
         // Notify others that we joined video chat
+        console.log("Emitting webrtc:join (audio only)");
         getSocket().emit("webrtc:join", { roomId });
 
         return audioStream;
@@ -188,8 +193,10 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
     const socket = getSocket();
 
     const handleWebrtcJoin = ({ userId, username, avatarColor }: any) => {
+      console.log(`User joined video: ${username} (${userId})`);
       if (userId === user.id) return;
 
+      console.log(`Initiating connection to ${username}`);
       const peer = new SimplePeer({
         initiator: true,
         trickle: true,
@@ -197,6 +204,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       });
 
       peer.on("signal", (signal) => {
+        // console.log("Generated signal (offer) for:", username);
         emitSignaling({
           type: "offer",
           from: user.id,
@@ -205,7 +213,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
       });
 
+      peer.on("connect", () => {
+        console.log(`Connected to peer: ${username}`);
+      });
+
       peer.on("stream", (stream) => {
+        console.log(`Received stream from: ${username}`);
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const existingPeer = newPeers.get(userId);
@@ -216,7 +229,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
       });
 
+      peer.on("error", (err) => {
+        console.error(`Peer error with ${username}:`, err);
+      });
+
       peer.on("close", () => {
+        console.log(`Connection closed with: ${username}`);
         peersRef.current.delete(userId);
         setPeers((prev) => {
           const newPeers = new Map(prev);
@@ -231,14 +249,22 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
     };
 
     const handleSignal = ({ type, from, payload }: any) => {
+      // console.log(`Received signal (${type}) from: ${from}`);
+
       if (type === "offer") {
-        // We need to find the user info. Since we don't have it in the signal,
-        // we might need to look it up from participants or request it.
-        // For now, let's try to find it in participants list.
         const participant = participants.find((p) => p.id === from);
-        // Fallback if not found in participants (shouldn't happen if list is up to date)
         const username = participant?.username || "Unknown User";
         const avatarColor = participant?.avatarColor || "#000000";
+
+        console.log(`Accepting offer from: ${username} (${from})`);
+
+        // If we already have a peer for this user, destroy it?
+        // simple-peer doesn't support re-negotiation easily if we just overwrite.
+        // But for a fresh "offer", we should typically create a new peer.
+        if (peersRef.current.has(from)) {
+          console.warn(`Peer ALREADY exists for ${username}. Overwriting...`);
+          peersRef.current.get(from)?.peer.destroy();
+        }
 
         const peer = new SimplePeer({
           initiator: false,
@@ -247,6 +273,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
 
         peer.on("signal", (signal) => {
+          // console.log("Generated signal (answer) for:", username);
           emitSignaling({
             type: "answer",
             from: user.id,
@@ -255,7 +282,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           });
         });
 
+        peer.on("connect", () => {
+          console.log(`Connected to peer (via offer): ${username}`);
+        });
+
         peer.on("stream", (stream) => {
+          console.log(`Received stream from (via offer): ${username}`);
           setPeers((prev) => {
             const newPeers = new Map(prev);
             const existingPeer = newPeers.get(from);
@@ -266,7 +298,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           });
         });
 
+        peer.on("error", (err) => {
+          console.error(`Peer error with ${username}:`, err);
+        });
+
         peer.on("close", () => {
+          console.log(`Connection closed with: ${username}`);
           peersRef.current.delete(from);
           setPeers((prev) => {
             const newPeers = new Map(prev);
@@ -286,9 +323,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         peersRef.current.set(from, peerData);
         setPeers((prev) => new Map(prev).set(from, peerData));
       } else if (type === "answer") {
+        console.log(`Received answer from ${from}`);
         const existingPeer = peersRef.current.get(from);
         if (existingPeer) {
           existingPeer.peer.signal(payload);
+        } else {
+          console.warn(`Received answer from ${from} but no peer found!`);
         }
       } else if (type === "ice-candidate") {
         const existingPeer = peersRef.current.get(from);

@@ -224,19 +224,30 @@ export async function registerRoutes(
 
     // WebRTC signaling
     socket.on("webrtc:signal", ({ type, from, to, payload }) => {
+      console.log(`[Server] webrtc:signal (${type}) from ${userData.username} to ${to}`);
       // Forward signal to specific user
       const targetSocket = Array.from(io.sockets.sockets.values()).find(
         (s) => (s.data as SocketData).userId === to
       );
 
       if (targetSocket) {
+        console.log(`[Server] Forwarding signal from ${userData.username} to ${to}`);
         targetSocket.emit("webrtc:signal", { type, from: userData.userId, to, payload });
+      } else {
+        console.warn(`[Server] Target user ${to} not found for signal from ${userData.username}`);
       }
     });
 
     socket.on("webrtc:join", ({ roomId }) => {
-      if (!roomId || userData.roomId !== roomId) return;
+      console.log(`[Server] webrtc:join from ${userData.username} for room ${roomId}`);
+      console.log(`[Server] userData.roomId: ${userData.roomId}`);
 
+      if (!roomId || userData.roomId !== roomId) {
+        console.warn(`[Server] Room mismatch or invalid! request=${roomId}, user=${userData.roomId}`);
+        return;
+      }
+
+      console.log(`[Server] Broadcasting webrtc:join to room ${roomId}`);
       socket.to(roomId).emit("webrtc:join", {
         userId: userData.userId,
         username: userData.username,
