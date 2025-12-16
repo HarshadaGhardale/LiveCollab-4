@@ -256,11 +256,24 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       if (userId === userRef.current?.id) return;
 
       console.log(`Initiating connection to ${username}`);
-      const peer = new SimplePeer({
-        initiator: true,
-        trickle: true,
-        stream: localStreamRef.current,
-      });
+      console.log(`Initiating connection to ${username}`);
+      let peer: SimplePeer.Instance;
+      try {
+        peer = new SimplePeer({
+          initiator: true,
+          trickle: true,
+          config: {
+            iceServers: [
+              { urls: "stun:stun.l.google.com:19302" },
+              { urls: "stun:global.stun.twilio.com:3478" },
+            ],
+          },
+          stream: localStreamRef.current,
+        });
+      } catch (err) {
+        console.error("Failed to create SimplePeer:", err);
+        return;
+      }
 
       // Initial status
       const peerData: Peer = {
@@ -369,11 +382,23 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           peersRef.current.get(from)?.peer.destroy();
         }
 
-        const peer = new SimplePeer({
-          initiator: false,
-          trickle: true,
-          stream: localStreamRef.current,
-        });
+        let peer: SimplePeer.Instance;
+        try {
+          peer = new SimplePeer({
+            initiator: false,
+            trickle: true,
+            config: {
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:global.stun.twilio.com:3478" },
+              ],
+            },
+            stream: localStreamRef.current,
+          });
+        } catch (err) {
+          console.error("Failed to create responder peer:", err);
+          return;
+        }
 
         // Initial status for answer side
         const peerData: Peer = {

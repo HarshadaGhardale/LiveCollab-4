@@ -408,7 +408,7 @@ export default function Room() {
                 data-testid="button-show-members"
               >
                 <Users className="h-4 w-4" />
-                <span className="hidden sm:inline font-medium">{room.memberCount}</span>
+                <span className="hidden sm:inline font-medium">{Array.from(presence.values()).length}</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Show members</TooltipContent>
