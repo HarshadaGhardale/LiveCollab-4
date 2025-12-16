@@ -217,6 +217,16 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
       });
 
+      // Log ICE state changes
+      // @ts-ignore - access internal peer connection for debugging
+      if (peer._pc) {
+        // @ts-ignore
+        peer._pc.oniceconnectionstatechange = () => {
+          // @ts-ignore
+          console.log(`[ICE State] ${username}: ${(peer._pc as RTCPeerConnection).iceConnectionState}`);
+        };
+      }
+
       peer.on("connect", () => {
         console.log(`Connected to peer: ${username}`);
       });
@@ -285,6 +295,16 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
             payload: signal,
           });
         });
+
+        // Log ICE state changes
+        // @ts-ignore
+        if (peer._pc) {
+          // @ts-ignore
+          peer._pc.oniceconnectionstatechange = () => {
+            // @ts-ignore
+            console.log(`[ICE State] ${username}: ${(peer._pc as RTCPeerConnection).iceConnectionState}`);
+          };
+        }
 
         peer.on("connect", () => {
           console.log(`Connected to peer (via offer): ${username}`);
