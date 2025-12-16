@@ -171,16 +171,6 @@ function ParticipantVideo({
               <MicOff className="h-3 w-3 text-red-400" />
             )}
           </div>
-          {/* DEBUG INFO - REMOVE LATER IF NEEDED but helpful for user */}
-          <div className="text-[10px] text-white/70 font-mono flex flex-col bg-black/40 p-1 rounded">
-            <span>Status: {effectiveStatus}</span>
-            <span>ICE: {participant.id === "local" ? "N/A" : "Wait..."}</span>
-            <span>Str: {stream ? `${stream.id.slice(0, 4)}` : "None"}</span>
-            <span>
-              V:{stream?.getVideoTracks()[0]?.readyState || "N/A"}
-              A:{stream?.getAudioTracks()[0]?.readyState || "N/A"}
-            </span>
-          </div>
         </div>
       </div>
     </motion.div>
