@@ -22,7 +22,14 @@
 
 <body>
   <div id="root"></div>
-  <script>const global = globalThis;</script>
+  <script>
+    window.global = window;
+    window.process = {
+      env: { DEBUG: undefined },
+      version: '',
+      nextTick: function (cb) { setTimeout(cb, 0) }
+    };
+  </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 
