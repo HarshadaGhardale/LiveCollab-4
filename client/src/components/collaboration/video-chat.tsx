@@ -112,6 +112,18 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
   const peersRef = useRef<Map<string, Peer>>(new Map());
 
+  const isJoinedRef = useRef(false);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
+  // Sync refs
+  useEffect(() => {
+    isJoinedRef.current = isJoined;
+  }, [isJoined]);
+
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
+
   const startLocalStream = useCallback(async () => {
     try {
       console.log("Starting local stream...");
@@ -192,26 +204,35 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
   // Handle WebRTC signaling
   useEffect(() => {
-    if (!isJoined || !localStream || !user) return;
-
+    // Only attach listeners once to avoid missing events during re-renders
     const socket = getSocket();
+    console.log("Attaching WebRTC socket listeners for user:", user?.id);
 
     const handleWebrtcJoin = ({ userId, username, avatarColor }: any) => {
-      console.log(`User joined video: ${username} (${userId})`);
-      if (userId === user.id) return;
+      console.log(`Received webrtc:join from ${username} (${userId})`);
+
+      if (!isJoinedRef.current) {
+        console.log("Ignoring webrtc:join - local user not joined video yet");
+        return;
+      }
+      if (!localStreamRef.current) {
+        console.log("Ignoring webrtc:join - no local stream available");
+        return;
+      }
+      if (userId === user?.id) return;
 
       console.log(`Initiating connection to ${username}`);
       const peer = new SimplePeer({
         initiator: true,
         trickle: true,
-        stream: localStream,
+        stream: localStreamRef.current,
       });
 
       peer.on("signal", (signal) => {
         // console.log("Generated signal (offer side) type:", signal.type);
         emitSignaling({
           type: signal.type || "ice-candidate",
-          from: user.id,
+          from: user?.id,
           to: userId,
           payload: signal,
         });
@@ -265,6 +286,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
     const handleSignal = ({ type, from, payload }: any) => {
       // console.log(`Received signal (${type}) from: ${from}`);
 
+      if (!isJoinedRef.current || !localStreamRef.current) {
+        // Optionally queue this signal? 
+        // For now, ignoring signals if we aren't in video mode is correct.
+        return;
+      }
+
       if (type === "offer") {
         const participant = participants.find((p) => p.id === from);
         const username = participant?.username || "Unknown User";
@@ -283,14 +310,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         const peer = new SimplePeer({
           initiator: false,
           trickle: true,
-          stream: localStream,
+          stream: localStreamRef.current,
         });
 
         peer.on("signal", (signal) => {
           // console.log("Generated signal (answer side) type:", signal.type);
           emitSignaling({
             type: signal.type || "ice-candidate",
-            from: user.id,
+            from: user?.id,
             to: from,
             payload: signal,
           });
@@ -363,6 +390,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
     };
 
     const handleWebrtcLeave = ({ userId }: any) => {
+      console.log("Peer left:", userId);
       const peer = peersRef.current.get(userId);
       if (peer) {
         peer.peer.destroy();
@@ -380,11 +408,12 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
     socket.on("webrtc:leave", handleWebrtcLeave);
 
     return () => {
+      console.log("Detaching WebRTC listeners");
       socket.off("webrtc:join", handleWebrtcJoin);
       socket.off("webrtc:signal", handleSignal);
       socket.off("webrtc:leave", handleWebrtcLeave);
     };
-  }, [isJoined, localStream, user, participants]);
+  }, [user, participants]); // Re-attach if user or participants change (necessary for closures)
 
   // Cleanup on unmount
   useEffect(() => {
