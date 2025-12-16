@@ -59,16 +59,20 @@ function ParticipantVideo({
       className="relative aspect-video bg-muted rounded-md overflow-hidden group"
       data-testid={`video-participant-${participant.id}`}
     >
-      {stream && !isVideoOff ? (
+      {/* Always render video for audio playback */}
+      {stream && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={isLocal}
-          className="w-full h-full object-cover"
+          className={`w-full h-full object-cover ${!isVideoOff ? "block" : "hidden"}`}
         />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center">
+      )}
+
+      {/* Show Avatar if video is off or no stream */}
+      {(!stream || isVideoOff) && (
+        <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-muted">
           <Avatar className="h-12 w-12">
             <AvatarFallback
               style={{ backgroundColor: participant.avatarColor }}
@@ -204,9 +208,9 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       });
 
       peer.on("signal", (signal) => {
-        // console.log("Generated signal (offer) for:", username);
+        // console.log("Generated signal (offer side) type:", signal.type);
         emitSignaling({
-          type: "offer",
+          type: signal.type || "ice-candidate",
           from: user.id,
           to: userId,
           payload: signal,
@@ -273,9 +277,9 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
 
         peer.on("signal", (signal) => {
-          // console.log("Generated signal (answer) for:", username);
+          // console.log("Generated signal (answer side) type:", signal.type);
           emitSignaling({
-            type: "answer",
+            type: signal.type || "ice-candidate",
             from: user.id,
             to: from,
             payload: signal,
