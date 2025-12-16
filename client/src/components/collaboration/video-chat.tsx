@@ -61,10 +61,46 @@ function ParticipantVideo({
   useEffect(() => {
     if (videoRef.current && stream) {
       console.log(`Attaching stream ${stream.id} to video element for ${participant.username}`);
+      const videoTracks = stream.getVideoTracks();
+      const audioTracks = stream.getAudioTracks();
+
+      if (videoTracks.length > 0) {
+        console.log(`Video track enabled: ${videoTracks[0].enabled}`);
+        videoTracks[0].enabled = true; // Force enable
+      }
+      if (audioTracks.length > 0) {
+        console.log(`Audio track enabled: ${audioTracks[0].enabled}`);
+        audioTracks[0].enabled = true; // Force enable
+      }
+
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(e => console.error("Error playing video:", e));
+
+      // Attempt to play
+      const tryPlay = async () => {
+        if (!videoRef.current) return;
+        try {
+          await videoRef.current.play();
+          console.log(`Video playing for ${participant.username}`);
+        } catch (e) {
+          console.warn("Autoplay block? Retrying muted.", e);
+          if (videoRef.current) {
+            videoRef.current.muted = true;
+            try {
+              await videoRef.current.play();
+              console.log(`Video playing (muted) for ${participant.username}`);
+            } catch (e2) {
+              console.error("Video playback completely failed", e2);
+            }
+          }
+        }
+      };
+
+      tryPlay();
     }
   }, [stream]);
+
+  // Force connected status if we have a stream
+  const effectiveStatus = stream ? "connected" : connectionStatus;
 
   return (
     <motion.div
@@ -78,10 +114,14 @@ function ParticipantVideo({
       {stream && (
         <video
           ref={videoRef}
-          autoPlay
+          // autoPlay // Let's try explicit play only, or handled by controls
           playsInline
+          // controls // Removed controls to avoid native loader confusion
           muted={isLocal}
-          className={`w-full h-full object-cover ${!isVideoOff ? "block" : "hidden"}`}
+          onLoadedMetadata={() => console.log(`Video metadata loaded for ${participant.username}`)}
+          onPlaying={() => console.log(`!!! VIDEO ACTUALLY PLAYING for ${participant.username} !!!`)}
+          onResize={(e) => console.log(`Video resized: ${e.currentTarget.videoWidth}x${e.currentTarget.videoHeight}`)}
+          className={`w-full h-full object-contain border-2 ${connectionStatus === 'connected' ? 'border-green-500' : 'border-red-500'} ${!isVideoOff ? "block" : "hidden"}`}
         />
       )}
 
@@ -99,17 +139,17 @@ function ParticipantVideo({
         </div>
       )}
 
-      {/* Connection Status Overlay */}
-      {connectionStatus !== "connected" && !isLocal && (
+      {/* Connection Status Overlay - Only show if effectively not connected */}
+      {effectiveStatus !== "connected" && !isLocal && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
           <div className="bg-background/80 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2">
-            {connectionStatus === "connecting" && (
+            {effectiveStatus === "connecting" && (
               <>
                 <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
                 Connecting...
               </>
             )}
-            {connectionStatus === "failed" && (
+            {effectiveStatus === "failed" && (
               <>
                 <div className="w-2 h-2 bg-red-500 rounded-full" />
                 Connection Failed
@@ -132,9 +172,14 @@ function ParticipantVideo({
             )}
           </div>
           {/* DEBUG INFO - REMOVE LATER IF NEEDED but helpful for user */}
-          <div className="text-[10px] text-white/70 font-mono">
-            {connectionStatus} | {stream ? `Str: ${stream.id.slice(0, 4)}` : "No Str"} |
-            {stream ? `V:${stream.getVideoTracks().length} A:${stream.getAudioTracks().length}` : ""}
+          <div className="text-[10px] text-white/70 font-mono flex flex-col bg-black/40 p-1 rounded">
+            <span>Status: {effectiveStatus}</span>
+            <span>ICE: {participant.id === "local" ? "N/A" : "Wait..."}</span>
+            <span>Str: {stream ? `${stream.id.slice(0, 4)}` : "None"}</span>
+            <span>
+              V:{stream?.getVideoTracks()[0]?.readyState || "N/A"}
+              A:{stream?.getAudioTracks()[0]?.readyState || "N/A"}
+            </span>
           </div>
         </div>
       </div>
@@ -282,7 +327,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         // @ts-ignore
         peer = new SimplePeerConstructor({
           initiator: true,
-          trickle: true,
+          trickle: false, // DISABLE TRICKLE: Wait for all candidates to be ready. More robust.
           config: {
             iceServers: [
               { urls: "stun:stun.l.google.com:19302" },
@@ -431,7 +476,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           // @ts-ignore
           peer = new SimplePeerConstructor({
             initiator: false,
-            trickle: true,
+            trickle: false, // DISABLE TRICKLE
             config: {
               iceServers: [
                 { urls: "stun:stun.l.google.com:19302" },
