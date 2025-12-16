@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import SimplePeer from "simple-peer";
+import type SimplePeer from "simple-peer";
+
+// Access global SimplePeer from CDN to avoid bundler polyfill issues
+const SimplePeerConstructor = (window as any).SimplePeer;
 import {
   Video,
   VideoOff,
@@ -259,7 +262,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       console.log(`Initiating connection to ${username}`);
       let peer: SimplePeer.Instance;
       try {
-        peer = new SimplePeer({
+        peer = new SimplePeerConstructor({
           initiator: true,
           trickle: true,
           config: {
@@ -388,7 +391,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         let peer: SimplePeer.Instance;
         try {
-          peer = new SimplePeer({
+          peer = new SimplePeerConstructor({
             initiator: false,
             trickle: true,
             config: {

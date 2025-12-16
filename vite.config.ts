@@ -39,7 +39,7 @@ export default defineConfig({
   },
   define: {
     global: "window",
-    "process.env": {},
+    process: "window.process",
     Buffer: ["buffer", "Buffer"],
   },
 });
