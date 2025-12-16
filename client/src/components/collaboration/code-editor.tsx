@@ -1,13 +1,14 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import Editor, { OnMount, OnChange } from "@monaco-editor/react";
-import { motion } from "framer-motion";
-import { Save, Settings, Copy, Check } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Save, Settings, Copy, Check, Play, Terminal, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useEditorStore, useThemeStore, useAuthStore } from "@/lib/stores";
 import { emitCodeEvent, getSocket } from "@/lib/socket";
 import { CODE_LANGUAGES } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 import type { editor } from "monaco-editor";
 
 interface CodeEditorProps {
@@ -20,17 +21,25 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const [content, setContent] = useState(initialContent);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [output, setOutput] = useState<string | null>(null);
+  const [showOutput, setShowOutput] = useState(false);
   const [copied, setCopied] = useState(false);
   const { language, fontSize, setLanguage, setFontSize } = useEditorStore();
   const { theme } = useThemeStore();
   const { user } = useAuthStore();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const isRemoteUpdate = useRef(false);
+
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
-    
+
     // Set up cursor position tracking
     editor.onDidChangeCursorPosition((e) => {
+      // Only emit if not a remote update (though cursor updates are usually local interactions)
+      if (isRemoteUpdate.current) return;
+
       emitCodeEvent(roomId, {
         type: "cursor",
         data: {
@@ -43,6 +52,8 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
 
     // Set up selection tracking
     editor.onDidChangeCursorSelection((e) => {
+      if (isRemoteUpdate.current) return;
+
       const selection = e.selection;
       if (!selection.isEmpty()) {
         emitCodeEvent(roomId, {
@@ -64,12 +75,14 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     setContent(newContent);
     onContentChange?.(newContent);
 
-    // Emit change event for real-time sync
-    emitCodeEvent(roomId, {
-      type: "change",
-      data: newContent,
-      userId: user?.id,
-    });
+    // Only emit if this change originated locally
+    if (!isRemoteUpdate.current) {
+      emitCodeEvent(roomId, {
+        type: "change",
+        data: newContent,
+        userId: user?.id,
+      });
+    }
 
     // Auto-save with debounce
     if (saveTimeoutRef.current) {
@@ -82,7 +95,7 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
 
   const handleLanguageChange = useCallback((newLanguage: string) => {
     setLanguage(newLanguage);
-    
+
     // Emit language change to other users
     emitCodeEvent(roomId, {
       type: "language",
@@ -102,6 +115,95 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     }
   }, []);
 
+  const handleRun = useCallback(async () => {
+    if (!content) return;
+
+    setIsRunning(true);
+    setShowOutput(true);
+    setOutput(null);
+
+    // Clear previous markers
+    if (editorRef.current) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        import("monaco-editor").then(monaco => {
+          monaco.editor.setModelMarkers(model, "owner", []);
+        });
+      }
+    }
+
+    try {
+      const res = await apiRequest("POST", "/api/execute-code", {
+        code: content,
+        language: language,
+      });
+
+      const data = await res.json();
+
+      let outputText = "";
+      if (data.output) outputText += data.output + "\n";
+      if (data.result !== undefined && data.result !== null) outputText += `Result: ${JSON.stringify(data.result, null, 2)}\n`;
+
+      if (data.errors) {
+        outputText += `Error: ${data.errors}\n`;
+
+        // Try to parse line numbers from error for highlighting
+        // GCC/Clang format: file.c:10:5: error: ...
+        // Python format: File "...", line 10
+        if (editorRef.current) {
+          const model = editorRef.current.getModel();
+          if (model) {
+            import("monaco-editor").then(monaco => {
+              const markers: editor.IMarkerData[] = [];
+              const lines = data.errors.split('\n');
+
+              for (const line of lines) {
+                // C/C++/Java regex: file.ext:line:col: or file.ext:line:
+                const commonMatch = line.match(/:(\d+)(?::(\d+))?:?/);
+                if (commonMatch) {
+                  const lineNumber = parseInt(commonMatch[1]);
+                  const column = commonMatch[2] ? parseInt(commonMatch[2]) : 1;
+                  markers.push({
+                    severity: monaco.MarkerSeverity.Error,
+                    message: line,
+                    startLineNumber: lineNumber,
+                    startColumn: column,
+                    endLineNumber: lineNumber,
+                    endColumn: column + 100 // Highlight rest of line
+                  });
+                }
+
+                // Python regex
+                const pyMatch = line.match(/line (\d+)/);
+                if (pyMatch && language.includes("python")) {
+                  const lineNumber = parseInt(pyMatch[1]);
+                  markers.push({
+                    severity: monaco.MarkerSeverity.Error,
+                    message: line,
+                    startLineNumber: lineNumber,
+                    startColumn: 1,
+                    endLineNumber: lineNumber,
+                    endColumn: 1000
+                  });
+                }
+              }
+
+              monaco.editor.setModelMarkers(model, "owner", markers);
+            });
+          }
+        }
+      }
+
+      if (!outputText) outputText = "Code executed successfully (no output)";
+
+      setOutput(outputText);
+    } catch (error) {
+      setOutput(`Failed to execute code: ${error}`);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [content, language]);
+
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content);
     setCopied(true);
@@ -112,7 +214,12 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
   useEffect(() => {
     if (editorRef.current && initialContent !== content) {
       const currentPosition = editorRef.current.getPosition();
+
+      // Mark as remote update to prevent echo
+      isRemoteUpdate.current = true;
       editorRef.current.setValue(initialContent);
+      isRemoteUpdate.current = false;
+
       if (currentPosition) {
         editorRef.current.setPosition(currentPosition);
       }
@@ -125,14 +232,22 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     const socket = getSocket();
     const handleCodeEvent = (event: any) => {
       if (event.userId === user?.id) return; // Ignore own events
-      
+
       if (event.type === "language") {
         setLanguage(event.data);
       } else if (event.type === "change") {
+        // Guard: Don't update if content is identical
+        if (event.data === content) return;
+
         setContent(event.data);
         if (editorRef.current) {
           const currentPosition = editorRef.current.getPosition();
+
+          // Mark as remote update
+          isRemoteUpdate.current = true;
           editorRef.current.setValue(event.data);
+          isRemoteUpdate.current = false;
+
           if (currentPosition) {
             editorRef.current.setPosition(currentPosition);
           }
@@ -145,7 +260,7 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     return () => {
       socket.off("code:event", handleCodeEvent);
     };
-  }, [user?.id, setLanguage]);
+  }, [user?.id, setLanguage, content]);
 
   return (
     <div className="flex flex-col h-full bg-card rounded-md border overflow-hidden">
@@ -198,6 +313,21 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
             </TooltipTrigger>
             <TooltipContent>Save</TooltipContent>
           </Tooltip>
+          <div className="w-px h-4 bg-border mx-1" />
+          <Button
+            size="sm"
+            className="h-7 gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+            onClick={handleRun}
+            disabled={isRunning}
+            data-testid="button-code-run"
+          >
+            {isRunning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5 fill-current" />
+            )}
+            <span className="text-xs">Run</span>
+          </Button>
         </div>
       </div>
 
@@ -231,6 +361,45 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
           }}
         />
       </div>
+
+      {/* Output Panel */}
+      <AnimatePresence>
+        {showOutput && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "30%", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t bg-zinc-950 text-zinc-50 flex flex-col shrink-0"
+          >
+            <div className="h-8 px-3 flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50">
+              <div className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+                <Terminal className="h-3.5 w-3.5" />
+                <span>Console Output</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-zinc-400 hover:text-zinc-100"
+                onClick={() => setShowOutput(false)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            <div className="flex-1 p-3 overflow-auto font-mono text-xs whitespace-pre-wrap">
+              {isRunning ? (
+                <div className="flex items-center gap-2 text-zinc-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Running code...</span>
+                </div>
+              ) : output ? (
+                output
+              ) : (
+                <span className="text-zinc-600 italic">No output</span>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Status bar */}
       <div className="h-6 px-3 flex items-center justify-between text-xs text-muted-foreground border-t bg-card shrink-0">

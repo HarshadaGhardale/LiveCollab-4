@@ -6,7 +6,7 @@ function getAuthToken(): string | null {
     // First try to get from Zustand store (faster)
     const token = useAuthStore.getState().accessToken;
     if (token) return token;
-    
+
     // Fallback to localStorage
     const authStorage = localStorage.getItem("auth-storage");
     if (authStorage) {
@@ -28,7 +28,18 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+import { toast } from "../hooks/use-toast";
+
 async function throwIfResNotOk(res: Response) {
+  if (res.status === 401) {
+    useAuthStore.getState().logout();
+    toast({
+      title: "Session Expired",
+      description: "Please log in again to continue.",
+      variant: "destructive",
+    });
+  }
+
   if (!res.ok) {
     let errorMessage = res.statusText;
     try {
@@ -71,21 +82,21 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    const url = queryKey[0] as string;
-    
-    const res = await fetch(url, {
-      credentials: "include",
-      headers: getAuthHeaders(),
-    });
+    async ({ queryKey }) => {
+      const url = queryKey[0] as string;
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
-    }
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
 
-    await throwIfResNotOk(res);
-    return await res.json();
-  };
+      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+        return null;
+      }
+
+      await throwIfResNotOk(res);
+      return await res.json();
+    };
 
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -17,9 +17,9 @@ const userSchema = new Schema<IUserDoc>({
 
 export const UserModel = mongoose.model<IUserDoc>("User", userSchema);
 
-// Room Model
 interface IRoomDoc extends Omit<Room, 'id'>, Document {
   _id: string;
+  expireAt: Date;
 }
 
 const roomSchema = new Schema<IRoomDoc>({
@@ -27,9 +27,11 @@ const roomSchema = new Schema<IRoomDoc>({
   slug: { type: String, required: true, unique: true, lowercase: true, index: true },
   name: { type: String, required: true },
   ownerId: { type: String, required: true },
+  type: { type: String, default: "standard" },
   isPrivate: { type: Boolean, default: false },
   createdAt: { type: String, required: true },
   lastActiveAt: { type: String, required: true },
+  expireAt: { type: Date, default: Date.now, expires: '5d' },
 });
 
 export const RoomModel = mongoose.model<IRoomDoc>("Room", roomSchema);
@@ -45,6 +47,7 @@ const roomStateSchema = new Schema<IRoomStateDoc>({
   whiteboardData: { type: String, default: "{}" },
   codeContent: { type: String, default: "// Start coding here...\n" },
   codeLanguage: { type: String, default: "javascript" },
+  webFiles: { type: Object },
   lastUpdatedAt: { type: String, required: true },
 });
 

@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { Server as SocketIOServer, Socket } from "socket.io";
 import { z } from "zod";
 import { storage } from "./storage";
+import { randomBytes } from "crypto";
+import bcrypt from "bcryptjs";
 import {
   authMiddleware,
   generateAccessToken,
@@ -17,6 +19,8 @@ import {
   loginSchema,
   insertRoomSchema,
 } from "@shared/schema";
+import { sendPasswordResetEmail } from "./email";
+import { executeCode } from "./execution";
 
 // Socket.IO types
 interface SocketData {
@@ -174,8 +178,8 @@ export async function registerRoutes(
     socket.on("code:event", async ({ roomId, event }) => {
       if (!roomId || userData.roomId !== roomId) return;
 
-      // Broadcast to all users in room (including sender)
-      io.to(roomId).emit("code:event", event);
+      // Broadcast to all users in room EXCEPT sender
+      socket.to(roomId).emit("code:event", event);
 
       // Save code content
       if (event.type === "change") {
@@ -187,6 +191,14 @@ export async function registerRoutes(
           console.error("Failed to save code state:", error);
         }
       }
+    });
+
+    // Chat events
+    socket.on("chat:message", ({ roomId, message }) => {
+      if (!roomId || userData.roomId !== roomId) return;
+
+      // Broadcast to all users in room (including sender)
+      io.to(roomId).emit("chat:message", message);
     });
 
     // Presence updates
@@ -222,10 +234,28 @@ export async function registerRoutes(
       }
     });
 
+    socket.on("webrtc:join", ({ roomId }) => {
+      if (!roomId || userData.roomId !== roomId) return;
+
+      socket.to(roomId).emit("webrtc:join", {
+        userId: userData.userId,
+        username: userData.username,
+        avatarColor: userData.avatarColor,
+      });
+    });
+
+    socket.on("webrtc:leave", ({ roomId }) => {
+      if (!roomId || userData.roomId !== roomId) return;
+
+      socket.to(roomId).emit("webrtc:leave", {
+        userId: userData.userId,
+      });
+    });
+
     // Disconnect handler
     socket.on("disconnect", () => {
       console.log(`User disconnected: ${userData.username}`);
-      
+
       if (userData.roomId) {
         removePresence(userData.roomId, userData.userId);
         io.to(userData.roomId).emit("user:left", { userId: userData.userId });
@@ -387,6 +417,180 @@ export async function registerRoutes(
   // Get current user
   app.get("/api/auth/me", authMiddleware, async (req: AuthRequest, res: Response) => {
     res.json({ user: req.user });
+  });
+
+  // Forgot password
+  app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        res.status(400).json({ message: "Email is required" });
+        return;
+      }
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        // Return success even if user not found to prevent enumeration
+        res.json({ message: "If an account exists, a reset link has been sent." });
+        return;
+      }
+
+      const token = randomBytes(32).toString("hex");
+      const expiry = Date.now() + 3600000; // 1 hour
+
+      await storage.setUserResetToken(user.id, token, expiry);
+
+      // MOCK EMAIL: Log token to console
+      await storage.setUserResetToken(user.id, token, expiry);
+
+      // Send reset email
+      const emailSent = await sendPasswordResetEmail(email, token);
+
+      if (emailSent) {
+        res.json({ message: "If an account exists, a reset link has been sent." });
+      } else {
+        // If email fails, we log it but still return generic success or 500?
+        // Usually better to return 500 or verify configuration if email is critical.
+        // For now, let's return 500 so they know it failed.
+        console.error("Failed to send reset email");
+        res.status(500).json({ message: "Failed to send reset email. Please try again later." });
+      }
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Reset password
+  app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
+    try {
+      const { token, newPassword } = req.body;
+
+      if (!token || !newPassword) {
+        res.status(400).json({ message: "Token and new password are required" });
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        res.status(400).json({ message: "Password must be at least 6 characters" });
+        return;
+      }
+
+      const user = await storage.getUserByResetToken(token);
+      if (!user) {
+        res.status(400).json({ message: "Invalid or expired token" });
+        return;
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(user.id, passwordHash);
+
+      res.json({ message: "Password reset successfully" });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==================== PROFILE MANAGEMENT ROUTES ====================
+
+  // Update username
+  app.patch("/api/user/profile", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { username } = req.body;
+
+      if (!username || username.trim().length < 3) {
+        res.status(400).json({ message: "Username must be at least 3 characters" });
+        return;
+      }
+
+      // Check if username is taken
+      const existing = await storage.getUserByUsername(username);
+      if (existing && existing.id !== req.userId) {
+        res.status(400).json({ message: "Username already taken" });
+        return;
+      }
+
+      await storage.updateUsername(req.userId!, username);
+      const updatedUser = await storage.getPublicUser(req.userId!);
+
+      res.json({ user: updatedUser, message: "Username updated successfully" });
+    } catch (error) {
+      console.error("Update username error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Change password
+  app.patch("/api/user/password", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ message: "Current and new password are required" });
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        res.status(400).json({ message: "New password must be at least 6 characters" });
+        return;
+      }
+
+      // Verify current password
+      const user = await storage.getUser(req.userId!);
+      if (!user) {
+        res.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      const isValid = await validatePassword(currentPassword, user.passwordHash);
+      if (!isValid) {
+        res.status(401).json({ message: "Current password is incorrect" });
+        return;
+      }
+
+      // Update password
+      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(req.userId!, newPasswordHash);
+
+      res.json({ message: "Password changed successfully" });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete account
+  app.delete("/api/user/account", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { password } = req.body;
+
+      if (!password) {
+        res.status(400).json({ message: "Password is required to delete account" });
+        return;
+      }
+
+      // Verify password
+      const user = await storage.getUser(req.userId!);
+      if (!user) {
+        res.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      const isValid = await validatePassword(password, user.passwordHash);
+      if (!isValid) {
+        res.status(401).json({ message: "Incorrect password" });
+        return;
+      }
+
+      // Delete user and all associated data
+      await storage.deleteUser(req.userId!);
+
+      res.json({ message: "Account deleted successfully" });
+    } catch (error) {
+      console.error("Delete account error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
   });
 
   // ==================== ROOM ROUTES ====================
@@ -557,11 +761,12 @@ export async function registerRoutes(
         return;
       }
 
-      const { whiteboardData, codeContent, codeLanguage } = req.body;
+      const { whiteboardData, codeContent, codeLanguage, webFiles } = req.body;
       const state = await storage.updateRoomState(id, {
         whiteboardData,
         codeContent,
         codeLanguage,
+        webFiles,
       });
 
       res.json(state);
@@ -594,6 +799,66 @@ export async function registerRoutes(
     }
   });
 
+  // Invite user to room
+  app.post("/api/rooms/:id/invite", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { username } = req.body;
+
+      if (!username) {
+        res.status(400).json({ message: "Username is required" });
+        return;
+      }
+
+      const room = await storage.getRoom(id);
+      if (!room) {
+        res.status(404).json({ message: "Room not found" });
+        return;
+      }
+
+      // Only owner can invite
+      if (room.ownerId !== req.userId) {
+        res.status(403).json({ message: "Only room owner can invite users" });
+        return;
+      }
+
+      const targetUser = await storage.getUserByUsername(username);
+      if (!targetUser) {
+        res.status(404).json({ message: "User not found" });
+        return;
+      }
+
+      // Check if already a member
+      const existingMembership = await storage.getMembership(targetUser.id, id);
+      if (existingMembership) {
+        res.status(400).json({ message: "User is already a member" });
+        return;
+      }
+
+      // Create membership
+      await storage.createMembership(targetUser.id, id, "editor");
+
+      // Notify user via socket if connected
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        (s) => (s.data as SocketData).userId === targetUser.id
+      );
+
+      if (targetSocket) {
+        targetSocket.emit("room:invite", {
+          roomId: room.id,
+          roomName: room.name,
+          slug: room.slug,
+          inviterName: req.user?.username || "Someone",
+        });
+      }
+
+      res.json({ message: "Invitation sent" });
+    } catch (error) {
+      console.error("Invite error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Execute code
   app.post("/api/execute-code", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
@@ -604,57 +869,19 @@ export async function registerRoutes(
         return;
       }
 
-      // Only support JavaScript/Node.js execution for security
-      if (language && language !== "javascript" && language !== "js") {
-        res.status(400).json({ message: "Only JavaScript execution is supported" });
-        return;
-      }
+      // Map language aliases
+      let lang = language;
+      if (lang === "js") lang = "javascript";
+      if (lang === "cpp") lang = "c++";
+      if (lang === "py") lang = "python";
 
-      // Create a safe execution environment
-      const output: string[] = [];
-      const errors: string[] = [];
-      let result: any = null;
+      const result = await executeCode(code, lang);
 
-      try {
-        // Override console to capture output
-        const customConsole = {
-          log: (...args: any[]) => {
-            output.push(args.map((arg) => {
-              if (typeof arg === "object") {
-                return JSON.stringify(arg, null, 2);
-              }
-              return String(arg);
-            }).join(" "));
-          },
-          error: (...args: any[]) => {
-            errors.push(args.map((arg) => String(arg)).join(" "));
-          },
-          warn: (...args: any[]) => {
-            output.push("[WARN] " + args.map((arg) => String(arg)).join(" "));
-          },
-          info: (...args: any[]) => {
-            output.push("[INFO] " + args.map((arg) => String(arg)).join(" "));
-          },
-        };
-
-        // Create isolated function and execute
-        const asyncFn = new Function("console", `return (async () => { ${code} })()`);
-        result = await asyncFn(customConsole);
-
-        res.json({
-          success: true,
-          output: output.join("\n"),
-          result: result,
-          errors: errors.length > 0 ? errors.join("\n") : null,
-        });
-      } catch (executionError) {
-        errors.push(String(executionError));
-        res.json({
-          success: false,
-          output: output.join("\n"),
-          errors: errors.join("\n"),
-        });
-      }
+      res.json({
+        success: result.success,
+        output: result.output,
+        errors: result.error,
+      });
     } catch (error) {
       console.error("Execute code error:", error);
       res.status(500).json({ message: "Internal server error" });

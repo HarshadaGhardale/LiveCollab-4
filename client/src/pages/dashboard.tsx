@@ -4,22 +4,27 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Plus, 
-  Users, 
-  LogOut, 
-  Loader2, 
-  Clock, 
+import {
+  Plus,
+  Users,
+  LogOut,
+  Loader2,
+  Clock,
   ArrowRight,
   Hash,
-  Lock
+  Lock,
+  Trash2,
+  Code2,
+  Layout,
+  Settings
 } from "lucide-react";
 import { insertRoomSchema, type InsertRoom, type RoomWithMemberCount } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -45,6 +50,27 @@ function formatRelativeTime(dateString: string): string {
 
 function RoomCard({ room }: { room: RoomWithMemberCount }) {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/rooms/${room.id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rooms"] });
+      toast({
+        title: "Room deleted",
+        description: "The room has been permanently deleted.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to delete room",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
 
   return (
     <motion.div
@@ -53,27 +79,64 @@ function RoomCard({ room }: { room: RoomWithMemberCount }) {
       exit={{ opacity: 0, y: -10 }}
       layout
     >
-      <Card className="group hover-elevate cursor-pointer" data-testid={`card-room-${room.id}`}>
+      <Card className="group hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 cursor-pointer border-border/50 bg-card/50 backdrop-blur-sm" data-testid={`card-room-${room.id}`}>
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-lg font-medium truncate flex items-center gap-2">
-                {room.isPrivate && <Lock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+              <CardTitle className="text-lg font-semibold truncate flex items-center gap-2">
+                {room.isPrivate && <Lock className="h-4 w-4 text-muted-foreground shrink-0" />}
                 {room.name}
               </CardTitle>
-              <CardDescription className="flex items-center gap-1.5 mt-1">
+              <CardDescription className="flex items-center gap-1.5 mt-1.5">
                 <Hash className="h-3 w-3" />
-                <span className="truncate">{room.slug}</span>
+                <span className="truncate font-mono text-xs">{room.slug}</span>
               </CardDescription>
             </div>
             {room.isOwner && (
-              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full shrink-0">
-                Owner
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs px-2.5 py-1 bg-primary/10 text-primary rounded-full font-medium">
+                  Owner
+                </span>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={(e) => e.stopPropagation()}
+                      data-testid={`button-delete-room-${room.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete room?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This action cannot be undone. This will permanently delete the room
+                        "{room.name}" and remove all data associated with it.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => deleteMutation.mutate()}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        {deleteMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Delete"
+                        )}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
             )}
           </div>
         </CardHeader>
-        <CardContent className="pb-3">
+        <CardContent className="pb-4">
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
@@ -86,8 +149,8 @@ function RoomCard({ room }: { room: RoomWithMemberCount }) {
           </div>
         </CardContent>
         <CardFooter className="pt-0">
-          <Button 
-            className="w-full"
+          <Button
+            className="w-full shadow-sm hover:shadow-md transition-shadow"
             variant="outline"
             onClick={() => setLocation(`/room/${room.slug}`)}
             data-testid={`button-join-room-${room.id}`}
@@ -132,6 +195,7 @@ function CreateRoomDialog() {
       name: "",
       slug: "",
       isPrivate: false,
+      type: "standard",
     },
   });
 
@@ -188,6 +252,51 @@ function CreateRoomDialog() {
                       data-testid="input-room-name"
                       {...field}
                     />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="type"
+              render={({ field }) => (
+                <FormItem className="space-y-3">
+                  <FormLabel>Room Type</FormLabel>
+                  <FormControl>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div
+                        className={`cursor-pointer rounded-lg border-2 p-4 hover:bg-accent ${field.value === "standard"
+                          ? "border-primary bg-accent"
+                          : "border-muted"
+                          }`}
+                        onClick={() => field.onChange("standard")}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <Code2 className="h-5 w-5 text-primary" />
+                          <div className="font-semibold">Programming</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Standard code editor with multi-language support and whiteboard.
+                        </div>
+                      </div>
+
+                      <div
+                        className={`cursor-pointer rounded-lg border-2 p-4 hover:bg-accent ${field.value === "web"
+                          ? "border-primary bg-accent"
+                          : "border-muted"
+                          }`}
+                        onClick={() => field.onChange("web")}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <Layout className="h-5 w-5 text-indigo-500" />
+                          <div className="font-semibold">Web Dev</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          HTML/CSS/JS editor with live preview and split view.
+                        </div>
+                      </div>
+                    </div>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -345,19 +454,27 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="h-14 px-4 flex items-center justify-between border-b sticky top-0 bg-background z-50">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <Users className="h-5 w-5 text-primary" />
-          <span className="font-semibold text-lg">CollabSpace</span>
+    <div className="min-h-screen bg-background relative overflow-hidden">
+      {/* Background gradient blobs */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className="absolute top-[-20%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[100px]" />
+      </div>
+
+      <header className="relative z-10 h-16 px-6 flex items-center justify-between border-b border-border/40 bg-background/60 backdrop-blur-md sticky top-0">
+        <Link href="/" className="flex items-center gap-2 group">
+          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
+            <Users className="h-5 w-5 text-primary" />
+          </div>
+          <span className="font-bold text-lg tracking-tight">LiveCollab</span>
         </Link>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <ThemeToggle />
-          <div className="flex items-center gap-2 pl-3 border-l">
-            <Avatar className="h-8 w-8">
+          <div className="flex items-center gap-3 pl-4 border-l border-border/40">
+            <Avatar className="h-9 w-9 ring-2 ring-primary/20">
               <AvatarFallback
                 style={{ backgroundColor: user?.avatarColor || "#3B82F6" }}
-                className="text-white text-sm font-medium"
+                className="text-white text-sm font-semibold"
               >
                 {user?.username?.charAt(0).toUpperCase() || "U"}
               </AvatarFallback>
@@ -368,8 +485,19 @@ export default function Dashboard() {
             <Button
               variant="ghost"
               size="icon"
+              onClick={() => setLocation("/profile")}
+              className="hover:bg-accent"
+              title="Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={handleLogout}
+              className="hover:bg-destructive/10 hover:text-destructive"
               data-testid="button-logout"
+              title="Logout"
             >
               <LogOut className="h-4 w-4" />
             </Button>
@@ -377,18 +505,18 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="flex-1 p-6 max-w-6xl mx-auto w-full">
+      <main className="relative z-10 flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-10">
             <div>
-              <h1 className="text-2xl font-semibold">
+              <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
                 Welcome back, {user?.username}
               </h1>
-              <p className="text-muted-foreground mt-1">
+              <p className="text-muted-foreground mt-2 text-base">
                 Select a room to continue collaborating
               </p>
             </div>

@@ -5,8 +5,8 @@ import { storage } from "./storage";
 import type { PublicUser } from "@shared/schema";
 
 const JWT_SECRET = process.env.SESSION_SECRET || "collab-space-secret-key-2024";
-const ACCESS_TOKEN_EXPIRY = "15m";
-const REFRESH_TOKEN_EXPIRY = "7d";
+const ACCESS_TOKEN_EXPIRY = "24h";
+const REFRESH_TOKEN_EXPIRY = "30d";
 
 export interface TokenPayload {
   userId: string;
@@ -53,7 +53,7 @@ export async function authMiddleware(
   next: NextFunction
 ): Promise<void> {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.status(401).json({ message: "No token provided" });
     return;

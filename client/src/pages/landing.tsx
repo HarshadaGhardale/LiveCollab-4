@@ -1,308 +1,283 @@
 import { Link } from "wouter";
-import { motion } from "framer-motion";
-import { 
-  Users, 
-  Pencil, 
-  Code2, 
-  Video, 
-  Zap, 
+import { motion, useScroll, useTransform } from "framer-motion";
+import {
+  Users,
+  Pencil,
+  Code2,
+  Video,
+  Zap,
   Shield,
   ArrowRight,
-  Check
+  Check,
+  Globe,
+  Monitor
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuthStore } from "@/lib/stores";
 
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.3,
+    },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 20 },
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 50 } },
+};
+
 const features = [
   {
     icon: Pencil,
-    title: "Shared Whiteboard",
-    description: "Draw, sketch, and brainstorm together in real-time with powerful drawing tools",
+    title: "Infinite Canvas",
+    description: "A free-form whiteboard for brainstorming, sketching, and diagrams.",
+    colSpan: "md:col-span-2",
+    bg: "bg-blue-500/10",
   },
   {
     icon: Code2,
-    title: "Code Editor",
-    description: "Write code collaboratively with syntax highlighting and live cursor tracking",
+    title: "Polyglot Editor",
+    description: " collaborative code editor supporting JS, Python, more.",
+    colSpan: "md:col-span-1",
+    bg: "bg-purple-500/10",
   },
   {
     icon: Video,
-    title: "Video Chat",
-    description: "Face-to-face communication with WebRTC peer-to-peer video calls",
+    title: "HD Video Calls",
+    description: "Built-in WebRTC video chat for seamless face-to-face comms.",
+    colSpan: "md:col-span-1",
+    bg: "bg-green-500/10",
   },
   {
     icon: Zap,
     title: "Real-time Sync",
-    description: "See changes instantly as your team works together on the same canvas",
+    description: "Sub-millisecond latency updates across all connected clients.",
+    colSpan: "md:col-span-2",
+    bg: "bg-orange-500/10",
   },
-  {
-    icon: Shield,
-    title: "Secure Rooms",
-    description: "Create private rooms with unique links for your team",
-  },
-  {
-    icon: Users,
-    title: "Live Presence",
-    description: "See who's online and track cursors of your collaborators",
-  },
-];
-
-const benefits = [
-  "Unlimited collaboration rooms",
-  "Real-time whiteboard with export",
-  "Code editor with 6+ languages",
-  "Video chat built-in",
-  "Live cursor tracking",
-  "Works on any device",
 ];
 
 export default function Landing() {
   const { isAuthenticated } = useAuthStore();
+  const { scrollY } = useScroll();
+  const opacity = useTransform(scrollY, [0, 300], [1, 0]);
+  const scale = useTransform(scrollY, [0, 300], [1, 0.95]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background selection:bg-primary/20">
+      {/* Dynamic Background */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-500/20 blur-[120px]" />
+      </div>
+
       {/* Header */}
-      <header className="h-14 px-4 flex items-center justify-between border-b sticky top-0 bg-background/95 backdrop-blur z-50">
-        <Link href="/" className="flex items-center gap-2">
-          <Users className="h-5 w-5 text-primary" />
-          <span className="font-semibold text-lg">CollabSpace</span>
-        </Link>
-        <div className="flex items-center gap-3">
-          <ThemeToggle />
-          {isAuthenticated ? (
-            <Button asChild data-testid="button-go-dashboard">
-              <Link href="/dashboard">
-                Dashboard
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Link>
-            </Button>
-          ) : (
-            <>
-              <Button variant="ghost" asChild data-testid="button-login">
-                <Link href="/login">Sign in</Link>
+      <header className="fixed top-0 w-full z-50 border-b border-border/40 bg-background/60 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2 group">
+            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
+              <Users className="h-5 w-5 text-primary" />
+            </div>
+            <span className="font-bold text-lg tracking-tight">LiveCollab</span>
+          </Link>
+          <div className="flex items-center gap-4">
+            <ThemeToggle />
+            {isAuthenticated ? (
+              <Button asChild size="sm" className="rounded-full px-6 font-medium">
+                <Link href="/dashboard">
+                  Dashboard <ArrowRight className="h-4 w-4 ml-2" />
+                </Link>
               </Button>
-              <Button asChild data-testid="button-register">
-                <Link href="/register">Get Started</Link>
-              </Button>
-            </>
-          )}
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" className="hidden md:flex" asChild>
+                  <Link href="/login">Sign in</Link>
+                </Button>
+                <Button asChild size="sm" className="rounded-full px-6 shadow-lg shadow-primary/20">
+                  <Link href="/register">Get Started</Link>
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/5" />
-        <div className="max-w-6xl mx-auto px-4 py-20 md:py-32 relative">
+      <main className="relative z-10 pt-32 pb-20 px-6">
+        {/* Hero Section */}
+        <section className="max-w-5xl mx-auto text-center mb-32">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            style={{ opacity, scale }}
+            initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="text-center"
+            transition={{ duration: 0.8, ease: "easeOut" }}
           >
-            <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-6">
-              Collaborate in
-              <span className="text-primary"> Real-Time</span>
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/60 leading-[1.1]">
+              Collaboration <br />
+              <span className="text-primary">Redefined.</span>
             </h1>
-            <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
-              A powerful workspace for teams to draw, code, and video chat together.
-              Create a room and start collaborating in seconds.
+
+            <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
+              The all-in-one workspace where teams build, design, and ship together.
+              Real-time whiteboards, code editors, and video chat in one powerful tab.
             </p>
+
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Button size="lg" asChild data-testid="button-hero-start">
+              <Button size="lg" className="h-12 px-8 rounded-full text-base shadow-xl shadow-primary/20 hover:shadow-2xl hover:shadow-primary/30 transition-all" asChild>
                 <Link href={isAuthenticated ? "/dashboard" : "/register"}>
-                  Start Collaborating
+                  Start Collaborating Free
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Link>
               </Button>
-              <Button size="lg" variant="outline" asChild data-testid="button-hero-learn">
-                <Link href="#features">Learn More</Link>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 px-8 rounded-full text-base bg-background/50 backdrop-blur-sm border-border/50 hover:bg-background/80"
+                onClick={() => {
+                  document.getElementById('features')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+              >
+                View Features
               </Button>
             </div>
           </motion.div>
 
-          {/* Hero illustration */}
+          {/* Hero Visual */}
           <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="mt-16 relative"
+            initial={{ opacity: 0, y: 60, rotateX: 20 }}
+            animate={{ opacity: 1, y: 0, rotateX: 0 }}
+            transition={{ duration: 1, delay: 0.4, type: "spring" }}
+            className="mt-20 relative perspective-[1000px]"
           >
-            <div className="aspect-video max-w-4xl mx-auto rounded-lg border bg-card shadow-2xl overflow-hidden">
-              <div className="h-10 px-4 flex items-center gap-2 border-b bg-muted/50">
+            <div className="border border-border/50 rounded-xl overflow-hidden shadow-2xl shadow-indigo-500/10 bg-card/50 backdrop-blur-sm">
+              <div className="h-12 border-b border-border/50 flex items-center px-4 gap-2 bg-muted/20">
                 <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-red-400" />
-                  <div className="w-3 h-3 rounded-full bg-amber-400" />
-                  <div className="w-3 h-3 rounded-full bg-green-400" />
+                  <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-green-500/80" />
                 </div>
-                <div className="flex-1 flex justify-center">
-                  <div className="px-3 py-1 rounded-md bg-background text-xs text-muted-foreground">
-                    collabspace.app/room/team-project
-                  </div>
+                <div className="bg-background/50 px-4 py-1 rounded-md text-xs text-muted-foreground ml-4 flex items-center gap-2 border border-border/30">
+                  <Shield className="w-3 h-3" /> livecollab-secure-room-8xw9
                 </div>
               </div>
-              <div className="flex h-[calc(100%-2.5rem)]">
-                <div className="flex-1 p-4 border-r">
-                  <div className="h-full rounded-md bg-muted/30 flex items-center justify-center">
-                    <Code2 className="h-16 w-16 text-muted-foreground/50" />
+              <div className="aspect-[16/9] bg-gradient-to-br from-background to-muted/30 flex items-center justify-center relative overflow-hidden group">
+                {/* Abstract UI Representation */}
+                <div className="absolute inset-0 grid grid-cols-2">
+                  <div className="border-r border-border/30 p-8 flex items-center justify-center relative">
+                    <Code2 className="w-24 h-24 text-primary/20" />
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-gradient-to-b from-transparent via-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+                  </div>
+                  <div className="p-8 flex items-center justify-center relative">
+                    <Pencil className="w-24 h-24 text-purple-500/20" />
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-gradient-to-b from-transparent via-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 delay-100" />
                   </div>
                 </div>
-                <div className="flex-1 p-4">
-                  <div className="h-full rounded-md bg-muted/30 flex items-center justify-center">
-                    <Pencil className="h-16 w-16 text-muted-foreground/50" />
-                  </div>
-                </div>
+                {/* Floating cursors */}
+                <motion.div
+                  animate={{ x: [0, 100, 0], y: [0, -50, 0] }}
+                  transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute top-1/4 left-1/4 flex flex-col items-start gap-1 z-10"
+                >
+                  <div className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-sm shadow-sm">Alex</div>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#3B82F6" className="-mt-1 block"><path d="M5.65376 12.3673H5.46026L5.31717 12.4976L0.500002 16.8829L0.500002 1.19177L11.4841 12.3673H5.65376Z" /></svg>
+                </motion.div>
+                <motion.div
+                  animate={{ x: [0, -80, 0], y: [0, 40, 0] }}
+                  transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+                  className="absolute bottom-1/3 right-1/3 flex flex-col items-start gap-1 z-10"
+                >
+                  <div className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-sm shadow-sm">Sarah</div>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#F59E0B" className="-mt-1 block"><path d="M5.65376 12.3673H5.46026L5.31717 12.4976L0.500002 16.8829L0.500002 1.19177L11.4841 12.3673H5.65376Z" /></svg>
+                </motion.div>
               </div>
             </div>
-            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-sm font-medium shadow-lg">
-              Live collaboration for teams
-            </div>
+            {/* Glow effect under image */}
+            <div className="absolute -inset-4 bg-primary/20 blur-3xl -z-10 rounded-[50px] opacity-40" />
           </motion.div>
-        </div>
-      </section>
+        </section>
 
-      {/* Features */}
-      <section id="features" className="py-20 border-t">
-        <div className="max-w-6xl mx-auto px-4">
+        {/* Features Bento Grid */}
+        <section id="features" className="max-w-6xl mx-auto mb-32">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-5xl font-bold mb-4">Power packed features</h2>
+            <p className="text-muted-foreground text-lg"> everything you need to build the next big thing.</p>
+          </div>
+
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-12"
+            variants={container}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true, margin: "-100px" }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6"
           >
-            <h2 className="text-3xl font-bold mb-4">Everything you need</h2>
-            <p className="text-muted-foreground max-w-lg mx-auto">
-              All the tools your team needs to collaborate effectively, all in one place.
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature, index) => (
+            {features.map((feature) => (
               <motion.div
                 key={feature.title}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
+                variants={item}
+                className={`${feature.colSpan} group relative overflow-hidden rounded-2xl border border-border/50 bg-card hover:bg-card/80 transition-colors`}
               >
-                <Card className="h-full hover-elevate">
-                  <CardContent className="p-6">
-                    <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center mb-4">
-                      <feature.icon className="h-5 w-5 text-primary" />
-                    </div>
-                    <h3 className="font-semibold mb-2">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {feature.description}
-                    </p>
-                  </CardContent>
-                </Card>
+                <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 ${feature.bg} blur-3xl`} />
+
+                <div className="relative p-8 h-full flex flex-col items-start">
+                  <div className="w-12 h-12 rounded-lg bg-background/50 border border-border/50 flex items-center justify-center mb-6 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                    <feature.icon className="h-6 w-6 text-foreground" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">{feature.title}</h3>
+                  <p className="text-muted-foreground leading-relaxed">{feature.description}</p>
+                </div>
               </motion.div>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Benefits */}
-      <section className="py-20 bg-muted/30">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-            >
-              <h2 className="text-3xl font-bold mb-4">
-                Built for modern teams
-              </h2>
-              <p className="text-muted-foreground mb-8">
-                Whether you're brainstorming ideas, reviewing code, or having a quick sync,
-                CollabSpace brings your team together in one seamless experience.
-              </p>
-              <ul className="space-y-3">
-                {benefits.map((benefit) => (
-                  <li key={benefit} className="flex items-center gap-3">
-                    <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                      <Check className="h-3 w-3 text-primary" />
-                    </div>
-                    <span className="text-sm">{benefit}</span>
-                  </li>
-                ))}
-              </ul>
-              <Button className="mt-8" asChild data-testid="button-benefits-start">
-                <Link href={isAuthenticated ? "/dashboard" : "/register"}>
-                  Get Started Free
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Link>
-              </Button>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              className="relative"
-            >
-              <div className="aspect-square max-w-md mx-auto rounded-lg border bg-card p-6">
-                <div className="h-full flex flex-col gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex -space-x-2">
-                      {["#3B82F6", "#10B981", "#F59E0B", "#EF4444"].map((color, i) => (
-                        <div
-                          key={i}
-                          className="w-8 h-8 rounded-full border-2 border-background"
-                          style={{ backgroundColor: color }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-sm text-muted-foreground">4 collaborating</span>
-                  </div>
-                  <div className="flex-1 rounded-md bg-muted/50 flex items-center justify-center">
-                    <div className="text-center">
-                      <Users className="h-12 w-12 text-muted-foreground/30 mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Your team here</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="py-20 border-t">
-        <div className="max-w-3xl mx-auto px-4 text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-          >
-            <h2 className="text-3xl font-bold mb-4">
-              Ready to start collaborating?
-            </h2>
-            <p className="text-muted-foreground mb-8">
-              Create your first room in seconds. No credit card required.
-            </p>
-            <Button size="lg" asChild data-testid="button-cta-start">
-              <Link href={isAuthenticated ? "/dashboard" : "/register"}>
-                Get Started Free
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Link>
-            </Button>
           </motion.div>
-        </div>
-      </section>
+        </section>
+
+        {/* Global Access / Social Proof */}
+        <section className="max-w-4xl mx-auto text-center mb-32">
+          <Card className="bg-gradient-to-br from-card to-card/50 border-primary/20 overflow-hidden relative">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -mr-32 -mt-32" />
+            <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl -ml-32 -mb-32" />
+
+            <CardContent className="p-12 relative z-10">
+              <h3 className="text-3xl font-bold mb-6">Built for teams of all sizes</h3>
+              <div className="flex flex-wrap justify-center gap-x-12 gap-y-8 grayscale opacity-70">
+                <div className="flex items-center gap-2 text-xl font-bold"><Monitor className="w-6 h-6" /> TechCorp</div>
+                <div className="flex items-center gap-2 text-xl font-bold"><Globe className="w-6 h-6" /> EduGlobal</div>
+                <div className="flex items-center gap-2 text-xl font-bold"><Zap className="w-6 h-6" /> FastStartup</div>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* CTA Footer */}
+        <section className="text-center pb-20">
+          <h2 className="text-4xl font-bold mb-8">Ready to sync up?</h2>
+          <Button size="lg" className="h-14 px-10 rounded-full text-lg shadow-2xl shadow-primary/30" asChild>
+            <Link href="/register">Get Started Now</Link>
+          </Button>
+          <p className="mt-6 text-sm text-muted-foreground">No credit card required. Free for personal use.</p>
+        </section>
+      </main>
 
       {/* Footer */}
-      <footer className="py-8 border-t">
-        <div className="max-w-6xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" />
-            <span className="font-semibold">CollabSpace</span>
+      <footer className="border-t border-border/40 bg-card/30 backdrop-blur-md py-12">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="flex items-center gap-2 opacity-80 hover:opacity-100 transition-opacity">
+            <Users className="h-5 w-5" />
+            <span className="font-bold">LiveCollab</span>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Real-time collaboration for modern teams
-          </p>
+          <div className="flex gap-8 text-sm text-muted-foreground">
+            <a href="#" className="hover:text-foreground transition-colors">Privacy</a>
+            <a href="#" className="hover:text-foreground transition-colors">Terms</a>
+            <a href="#" className="hover:text-foreground transition-colors">Contact</a>
+          </div>
+          <div className="text-sm text-muted-foreground/60">
+            © 2024 LiveCollab. All rights reserved.
+          </div>
         </div>
       </footer>
     </div>

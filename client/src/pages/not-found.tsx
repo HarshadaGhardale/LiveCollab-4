@@ -10,7 +10,7 @@ export default function NotFound() {
       <header className="h-14 px-4 flex items-center justify-between border-b">
         <Link href="/" className="flex items-center gap-2">
           <Users className="h-5 w-5 text-primary" />
-          <span className="font-semibold text-lg">CollabSpace</span>
+          <span className="font-semibold text-lg">LiveCollab</span>
         </Link>
         <ThemeToggle />
       </header>

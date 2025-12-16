@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import SimplePeer from "simple-peer";
-import { 
-  Video, 
-  VideoOff, 
-  Mic, 
-  MicOff, 
+import {
+  Video,
+  VideoOff,
+  Mic,
+  MicOff,
   PhoneOff,
   Maximize2,
   Minimize2,
@@ -30,13 +30,13 @@ interface VideoChatProps {
   participants: Array<{ id: string; username: string; avatarColor: string }>;
 }
 
-function ParticipantVideo({ 
-  participant, 
-  stream, 
+function ParticipantVideo({
+  participant,
+  stream,
   isLocal = false,
   isMuted = false,
   isVideoOff = false
-}: { 
+}: {
   participant: { id: string; username: string; avatarColor: string };
   stream?: MediaStream;
   isLocal?: boolean;
@@ -70,7 +70,7 @@ function ParticipantVideo({
       ) : (
         <div className="w-full h-full flex items-center justify-center">
           <Avatar className="h-12 w-12">
-            <AvatarFallback 
+            <AvatarFallback
               style={{ backgroundColor: participant.avatarColor }}
               className="text-white text-lg font-medium"
             >
@@ -116,6 +116,10 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       });
       setLocalStream(stream);
       setIsJoined(true);
+
+      // Notify others that we joined video chat
+      getSocket().emit("webrtc:join", { roomId });
+
       return stream;
     } catch (error) {
       console.error("Failed to get media devices:", error);
@@ -128,24 +132,34 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         setLocalStream(audioStream);
         setIsVideoOn(false);
         setIsJoined(true);
+
+        // Notify others that we joined video chat
+        getSocket().emit("webrtc:join", { roomId });
+
         return audioStream;
       } catch (audioError) {
         console.error("Failed to get audio:", audioError);
         return null;
       }
     }
-  }, []);
+  }, [roomId]);
 
   const stopLocalStream = useCallback(() => {
     if (localStream) {
       localStream.getTracks().forEach((track) => track.stop());
       setLocalStream(null);
     }
+
+    // Notify others that we left video chat
+    if (isJoined) {
+      getSocket().emit("webrtc:leave", { roomId });
+    }
+
     peersRef.current.forEach((peer) => peer.peer.destroy());
     peersRef.current.clear();
     setPeers(new Map());
     setIsJoined(false);
-  }, [localStream]);
+  }, [localStream, isJoined, roomId]);
 
   const toggleVideo = useCallback(() => {
     if (localStream) {
@@ -173,7 +187,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
     const socket = getSocket();
 
-    const handleUserJoined = ({ userId, username, avatarColor }: any) => {
+    const handleWebrtcJoin = ({ userId, username, avatarColor }: any) => {
       if (userId === user.id) return;
 
       const peer = new SimplePeer({
@@ -218,8 +232,13 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
     const handleSignal = ({ type, from, payload }: any) => {
       if (type === "offer") {
+        // We need to find the user info. Since we don't have it in the signal,
+        // we might need to look it up from participants or request it.
+        // For now, let's try to find it in participants list.
         const participant = participants.find((p) => p.id === from);
-        if (!participant) return;
+        // Fallback if not found in participants (shouldn't happen if list is up to date)
+        const username = participant?.username || "Unknown User";
+        const avatarColor = participant?.avatarColor || "#000000";
 
         const peer = new SimplePeer({
           initiator: false,
@@ -258,11 +277,11 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.signal(payload);
 
-        const peerData = { 
-          id: from, 
-          username: participant.username, 
-          avatarColor: participant.avatarColor, 
-          peer 
+        const peerData = {
+          id: from,
+          username,
+          avatarColor,
+          peer
         };
         peersRef.current.set(from, peerData);
         setPeers((prev) => new Map(prev).set(from, peerData));
@@ -279,7 +298,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       }
     };
 
-    const handleUserLeft = ({ userId }: any) => {
+    const handleWebrtcLeave = ({ userId }: any) => {
       const peer = peersRef.current.get(userId);
       if (peer) {
         peer.peer.destroy();
@@ -292,14 +311,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       }
     };
 
-    socket.on("user:joined", handleUserJoined);
+    socket.on("webrtc:join", handleWebrtcJoin);
     socket.on("webrtc:signal", handleSignal);
-    socket.on("user:left", handleUserLeft);
+    socket.on("webrtc:leave", handleWebrtcLeave);
 
     return () => {
-      socket.off("user:joined", handleUserJoined);
+      socket.off("webrtc:join", handleWebrtcJoin);
       socket.off("webrtc:signal", handleSignal);
-      socket.off("user:left", handleUserLeft);
+      socket.off("webrtc:leave", handleWebrtcLeave);
     };
   }, [isJoined, localStream, user, participants]);
 

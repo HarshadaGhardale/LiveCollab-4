@@ -37,7 +37,7 @@ export default function Register() {
       setAuth(data.user, data.accessToken, data.refreshToken);
       toast({
         title: "Account created!",
-        description: "Welcome to CollabSpace.",
+        description: "Welcome to LiveCollab.",
       });
       setLocation("/dashboard");
     } catch (error: any) {
@@ -52,43 +52,52 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="h-14 px-4 flex items-center justify-between border-b">
-        <Link href="/" className="flex items-center gap-2 hover-elevate rounded-md px-2 py-1">
-          <Users className="h-5 w-5 text-primary" />
-          <span className="font-semibold text-lg">CollabSpace</span>
+    <div className="min-h-screen bg-background relative overflow-hidden">
+      {/* Background gradient blobs */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-primary/10 blur-[120px]" />
+        <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-500/10 blur-[120px]" />
+      </div>
+
+      <header className="relative z-10 h-16 px-6 flex items-center justify-between border-b border-border/40 bg-background/60 backdrop-blur-md">
+        <Link href="/" className="flex items-center gap-2 group">
+          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
+            <Users className="h-5 w-5 text-primary" />
+          </div>
+          <span className="font-bold text-lg tracking-tight">LiveCollab</span>
         </Link>
         <ThemeToggle />
       </header>
 
-      <main className="flex-1 flex items-center justify-center p-4">
+      <main className="relative z-10 flex-1 flex items-center justify-center p-6 min-h-[calc(100vh-4rem)]">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
           className="w-full max-w-md"
         >
-          <Card>
-            <CardHeader className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-semibold tracking-tight">
+          <Card className="border-border/50 bg-card/50 backdrop-blur-sm shadow-2xl">
+            <CardHeader className="space-y-2 text-center pb-6">
+              <CardTitle className="text-3xl font-bold tracking-tight">
                 Create an account
               </CardTitle>
-              <CardDescription>
-                Join CollabSpace and start collaborating in real-time
+              <CardDescription className="text-base">
+                Join LiveCollab and start collaborating in real-time
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pb-8">
               <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
                   <FormField
                     control={form.control}
                     name="username"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Username</FormLabel>
+                        <FormLabel className="text-sm font-medium">Username</FormLabel>
                         <FormControl>
                           <Input
                             placeholder="johndoe"
+                            className="h-11"
                             data-testid="input-username"
                             {...field}
                           />
@@ -102,11 +111,12 @@ export default function Register() {
                     name="email"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Email</FormLabel>
+                        <FormLabel className="text-sm font-medium">Email</FormLabel>
                         <FormControl>
                           <Input
                             type="email"
                             placeholder="you@example.com"
+                            className="h-11"
                             data-testid="input-email"
                             {...field}
                           />
@@ -120,11 +130,12 @@ export default function Register() {
                     name="password"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Password</FormLabel>
+                        <FormLabel className="text-sm font-medium">Password</FormLabel>
                         <FormControl>
                           <Input
                             type="password"
-                            placeholder="Create a password"
+                            placeholder="Create a password (min. 6 characters)"
+                            className="h-11"
                             data-testid="input-password"
                             {...field}
                           />
@@ -135,7 +146,7 @@ export default function Register() {
                   />
                   <Button
                     type="submit"
-                    className="w-full"
+                    className="w-full h-11 rounded-lg shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all"
                     disabled={isLoading}
                     data-testid="button-register"
                   >
@@ -151,11 +162,11 @@ export default function Register() {
                 </form>
               </Form>
 
-              <div className="mt-6 text-center text-sm text-muted-foreground">
-                Already have an account?{" "}
+              <div className="mt-8 text-center text-sm">
+                <span className="text-muted-foreground">Already have an account?</span>{" "}
                 <Link
                   href="/login"
-                  className="text-primary underline-offset-4 hover:underline"
+                  className="text-primary font-medium hover:underline underline-offset-4"
                   data-testid="link-login"
                 >
                   Sign in

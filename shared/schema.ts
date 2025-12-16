@@ -8,6 +8,8 @@ export const userSchema = z.object({
   passwordHash: z.string(),
   avatarColor: z.string(),
   createdAt: z.string(),
+  resetToken: z.string().optional(),
+  resetTokenExpiry: z.number().optional(),
 });
 
 export const insertUserSchema = z.object({
@@ -34,6 +36,7 @@ export const roomSchema = z.object({
   slug: z.string().min(3).max(50),
   name: z.string().min(1).max(100),
   ownerId: z.string(),
+  type: z.enum(["standard", "web"]).default("standard"),
   isPrivate: z.boolean().default(false),
   createdAt: z.string(),
   lastActiveAt: z.string(),
@@ -42,6 +45,7 @@ export const roomSchema = z.object({
 export const insertRoomSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(3).max(50).optional(),
+  type: z.enum(["standard", "web"]).default("standard"),
   isPrivate: z.boolean().default(false),
 });
 
@@ -54,6 +58,7 @@ export const roomStateSchema = z.object({
   whiteboardData: z.string().default("{}"),
   codeContent: z.string().default("// Start coding here...\n"),
   codeLanguage: z.string().default("javascript"),
+  webFiles: z.record(z.string()).optional(),
   lastUpdatedAt: z.string(),
 });
 
@@ -152,7 +157,7 @@ export type DrawingTool = typeof DRAWING_TOOLS[number]["id"];
 
 // Color palette for drawing
 export const COLOR_PALETTE = [
-  "#000000", "#FFFFFF", "#EF4444", "#F97316", 
+  "#000000", "#FFFFFF", "#EF4444", "#F97316",
   "#EAB308", "#22C55E", "#3B82F6", "#8B5CF6",
   "#EC4899", "#6B7280", "#78716C", "#0EA5E9",
 ] as const;
@@ -160,9 +165,14 @@ export const COLOR_PALETTE = [
 // Code languages
 export const CODE_LANGUAGES = [
   { id: "javascript", name: "JavaScript" },
-  { id: "typescript", name: "TypeScript" },
   { id: "python", name: "Python" },
-  { id: "html", name: "HTML" },
-  { id: "css", name: "CSS" },
-  { id: "json", name: "JSON" },
+  { id: "java", name: "Java" },
+  { id: "c", name: "C" },
+  { id: "cpp", name: "C++" },
 ] as const;
+
+export const inviteUserSchema = z.object({
+  username: z.string().min(1),
+});
+
+export type InviteUser = z.infer<typeof inviteUserSchema>;
