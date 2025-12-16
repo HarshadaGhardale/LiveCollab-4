@@ -63,7 +63,7 @@ export default function Login() {
           <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
             <Users className="h-5 w-5 text-primary" />
           </div>
-          <span className="font-bold text-lg tracking-tight">SynapseCollab</span>
+          <span className="font-bold text-lg tracking-tight">LiveCollab</span>
         </Link>
         <ThemeToggle />
       </header>
