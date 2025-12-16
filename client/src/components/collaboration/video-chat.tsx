@@ -23,6 +23,7 @@ interface Peer {
   avatarColor: string;
   peer: SimplePeer.Instance;
   stream?: MediaStream;
+  connectionStatus?: "connecting" | "connected" | "failed";
 }
 
 interface VideoChatProps {
@@ -35,13 +36,15 @@ function ParticipantVideo({
   stream,
   isLocal = false,
   isMuted = false,
-  isVideoOff = false
+  isVideoOff = false,
+  connectionStatus = "connected"
 }: {
   participant: { id: string; username: string; avatarColor: string };
   stream?: MediaStream;
   isLocal?: boolean;
   isMuted?: boolean;
   isVideoOff?: boolean;
+  connectionStatus?: "connecting" | "connected" | "failed";
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -84,6 +87,26 @@ function ParticipantVideo({
         </div>
       )}
 
+      {/* Connection Status Overlay */}
+      {connectionStatus !== "connected" && !isLocal && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
+          <div className="bg-background/80 px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2">
+            {connectionStatus === "connecting" && (
+              <>
+                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+                Connecting...
+              </>
+            )}
+            {connectionStatus === "failed" && (
+              <>
+                <div className="w-2 h-2 bg-red-500 rounded-full" />
+                Connection Failed
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Name overlay */}
       <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
         <div className="flex items-center gap-2">
@@ -112,8 +135,11 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
   const peersRef = useRef<Map<string, Peer>>(new Map());
 
+  // State refs to avoid re-binding listeners
   const isJoinedRef = useRef(false);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const userRef = useRef(user);
+  const participantsRef = useRef(participants);
 
   // Sync refs
   useEffect(() => {
@@ -123,6 +149,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
 
   const startLocalStream = useCallback(async () => {
     try {
@@ -219,7 +253,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         console.log("Ignoring webrtc:join - no local stream available");
         return;
       }
-      if (userId === user?.id) return;
+      if (userId === userRef.current?.id) return;
 
       console.log(`Initiating connection to ${username}`);
       const peer = new SimplePeer({
@@ -228,11 +262,22 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         stream: localStreamRef.current,
       });
 
+      // Initial status
+      const peerData: Peer = {
+        id: userId,
+        username,
+        avatarColor,
+        peer,
+        connectionStatus: "connecting"
+      };
+      peersRef.current.set(userId, peerData);
+      setPeers((prev) => new Map(prev).set(userId, peerData));
+
       peer.on("signal", (signal) => {
         // console.log("Generated signal (offer side) type:", signal.type);
         emitSignaling({
           type: signal.type || "ice-candidate",
-          from: user?.id,
+          from: userRef.current?.id,
           to: userId,
           payload: signal,
         });
@@ -250,6 +295,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
       peer.on("connect", () => {
         console.log(`Connected to peer: ${username}`);
+        setPeers((prev) => {
+          const newPeers = new Map(prev);
+          const existingPeer = newPeers.get(userId);
+          if (existingPeer) {
+            newPeers.set(userId, { ...existingPeer, connectionStatus: "connected" });
+          }
+          return newPeers;
+        });
       });
 
       peer.on("stream", (stream) => {
@@ -266,6 +319,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
       peer.on("error", (err) => {
         console.error(`Peer error with ${username}:`, err);
+        setPeers((prev) => {
+          const newPeers = new Map(prev);
+          const existingPeer = newPeers.get(userId);
+          if (existingPeer) {
+            newPeers.set(userId, { ...existingPeer, connectionStatus: "failed" });
+          }
+          return newPeers;
+        });
       });
 
       peer.on("close", () => {
@@ -278,9 +339,10 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
         });
       });
 
-      const peerData = { id: userId, username, avatarColor, peer };
-      peersRef.current.set(userId, peerData);
-      setPeers((prev) => new Map(prev).set(userId, peerData));
+      // Removed initial setPeers here as it's done at creation time above with 'connecting' status
+      // const peerData = { id: userId, username, avatarColor, peer };
+      // peersRef.current.set(userId, peerData);
+      // setPeers((prev) => new Map(prev).set(userId, peerData));
     };
 
     const handleSignal = ({ type, from, payload }: any) => {
@@ -293,7 +355,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       }
 
       if (type === "offer") {
-        const participant = participants.find((p) => p.id === from);
+        const participant = participantsRef.current.find((p) => p.id === from);
         const username = participant?.username || "Unknown User";
         const avatarColor = participant?.avatarColor || "#000000";
 
@@ -313,11 +375,22 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
           stream: localStreamRef.current,
         });
 
+        // Initial status for answer side
+        const peerData: Peer = {
+          id: from,
+          username,
+          avatarColor,
+          peer,
+          connectionStatus: "connecting"
+        };
+        peersRef.current.set(from, peerData);
+        setPeers((prev) => new Map(prev).set(from, peerData));
+
         peer.on("signal", (signal) => {
           // console.log("Generated signal (answer side) type:", signal.type);
           emitSignaling({
             type: signal.type || "ice-candidate",
-            from: user?.id,
+            from: userRef.current?.id,
             to: from,
             payload: signal,
           });
@@ -335,6 +408,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.on("connect", () => {
           console.log(`Connected to peer (via offer): ${username}`);
+          setPeers((prev) => {
+            const newPeers = new Map(prev);
+            const existingPeer = newPeers.get(from);
+            if (existingPeer) {
+              newPeers.set(from, { ...existingPeer, connectionStatus: "connected" });
+            }
+            return newPeers;
+          });
         });
 
         peer.on("stream", (stream) => {
@@ -351,6 +432,14 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.on("error", (err) => {
           console.error(`Peer error with ${username}:`, err);
+          setPeers((prev) => {
+            const newPeers = new Map(prev);
+            const existingPeer = newPeers.get(from);
+            if (existingPeer) {
+              newPeers.set(from, { ...existingPeer, connectionStatus: "failed" });
+            }
+            return newPeers;
+          });
         });
 
         peer.on("close", () => {
@@ -365,14 +454,15 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
 
         peer.signal(payload);
 
-        const peerData = {
-          id: from,
-          username,
-          avatarColor,
-          peer
-        };
-        peersRef.current.set(from, peerData);
-        setPeers((prev) => new Map(prev).set(from, peerData));
+        // Removed redundant setPeers here
+        // const peerData = {
+        //   id: from,
+        //   username,
+        //   avatarColor,
+        //   peer
+        // };
+        // peersRef.current.set(from, peerData);
+        // setPeers((prev) => new Map(prev).set(from, peerData));
       } else if (type === "answer") {
         console.log(`Received answer from ${from}`);
         const existingPeer = peersRef.current.get(from);
@@ -413,7 +503,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
       socket.off("webrtc:signal", handleSignal);
       socket.off("webrtc:leave", handleWebrtcLeave);
     };
-  }, [user, participants]); // Re-attach if user or participants change (necessary for closures)
+  }, []); // NO DEPENDENCIES - Listeners persist forever while component is mounted
 
   // Cleanup on unmount
   useEffect(() => {
@@ -493,6 +583,7 @@ export function VideoChat({ roomId, participants }: VideoChatProps) {
                           avatarColor: peer.avatarColor,
                         }}
                         stream={peer.stream}
+                        connectionStatus={peer.connectionStatus}
                       />
                     </div>
                   ))}
