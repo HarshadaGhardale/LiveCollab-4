@@ -236,6 +236,7 @@ export class MemStorage implements IStorage {
       codeContent: updates.codeContent || existingState?.codeContent || "// Start coding here...\n",
       codeLanguage: updates.codeLanguage || existingState?.codeLanguage || "javascript",
       webFiles: updates.webFiles ? { ...(existingState?.webFiles || {}), ...updates.webFiles } : existingState?.webFiles,
+      chatbotMessages: updates.chatbotMessages !== undefined ? updates.chatbotMessages : (existingState?.chatbotMessages || []),
       lastUpdatedAt: now,
     };
 
@@ -533,7 +534,15 @@ export class MongoDBStorage implements IStorage {
   async getRoomState(roomId: string): Promise<RoomState | undefined> {
     const state = await RoomStateModel.findOne({ roomId }).lean();
     if (!state) return undefined;
-    return { roomId: state.roomId, whiteboardData: state.whiteboardData, codeContent: state.codeContent, codeLanguage: state.codeLanguage, webFiles: state.webFiles, lastUpdatedAt: state.lastUpdatedAt };
+    return { 
+      roomId: state.roomId, 
+      whiteboardData: state.whiteboardData, 
+      codeContent: state.codeContent, 
+      codeLanguage: state.codeLanguage, 
+      webFiles: state.webFiles,
+      chatbotMessages: state.chatbotMessages || [],
+      lastUpdatedAt: state.lastUpdatedAt 
+    };
   }
 
   async updateRoomState(roomId: string, updates: Partial<RoomState>): Promise<RoomState> {
@@ -553,6 +562,7 @@ export class MongoDBStorage implements IStorage {
         codeContent: updates.codeContent || existing?.codeContent || "// Start coding here...\n",
         codeLanguage: updates.codeLanguage || existing?.codeLanguage || "javascript",
         webFiles,
+        chatbotMessages: updates.chatbotMessages !== undefined ? updates.chatbotMessages : (existing?.chatbotMessages || []),
         lastUpdatedAt: now,
       },
       { new: true, upsert: true }
@@ -560,7 +570,15 @@ export class MongoDBStorage implements IStorage {
 
     await RoomModel.findByIdAndUpdate(roomId, { lastActiveAt: now });
 
-    return { roomId: state!.roomId, whiteboardData: state!.whiteboardData, codeContent: state!.codeContent, codeLanguage: state!.codeLanguage, webFiles: state!.webFiles, lastUpdatedAt: state!.lastUpdatedAt };
+    return { 
+      roomId: state!.roomId, 
+      whiteboardData: state!.whiteboardData, 
+      codeContent: state!.codeContent, 
+      codeLanguage: state!.codeLanguage, 
+      webFiles: state!.webFiles,
+      chatbotMessages: state!.chatbotMessages || [],
+      lastUpdatedAt: state!.lastUpdatedAt 
+    };
   }
 
   // Membership operations

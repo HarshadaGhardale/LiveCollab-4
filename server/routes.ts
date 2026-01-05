@@ -5,6 +5,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
+import OpenAI from "openai";
 import {
   authMiddleware,
   generateAccessToken,
@@ -21,6 +22,7 @@ import {
 } from "@shared/schema";
 import { sendPasswordResetEmail } from "./email";
 import { executeCode } from "./execution";
+import { generateChatbotResponse } from "./chatbot-fallback";
 
 // Socket.IO types
 interface SocketData {
@@ -772,12 +774,13 @@ export async function registerRoutes(
         return;
       }
 
-      const { whiteboardData, codeContent, codeLanguage, webFiles } = req.body;
+      const { whiteboardData, codeContent, codeLanguage, webFiles, chatbotMessages } = req.body;
       const state = await storage.updateRoomState(id, {
         whiteboardData,
         codeContent,
         codeLanguage,
         webFiles,
+        chatbotMessages,
       });
 
       res.json(state);
@@ -899,5 +902,381 @@ export async function registerRoutes(
     }
   });
 
+  // ==================== CHATBOT ROUTES ====================
+
+  // Chatbot chat endpoint with streaming
+  app.post("/api/chatbot/chat", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { message, roomId, conversationHistory } = req.body;
+
+      if (!message || typeof message !== "string" || message.trim().length === 0) {
+        res.status(400).json({ message: "Message is required" });
+        return;
+      }
+
+      // Check if OpenAI API key is configured
+      const openaiApiKey = process.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        console.log("[Chatbot] OpenAI API key not found, using fallback");
+        // Fallback to comprehensive Q&A system
+        const response = await generateChatbotResponse(
+          "",
+          message,
+          conversationHistory || []
+        );
+        
+        // Save to room state if roomId provided
+        if (roomId) {
+          try {
+            const roomState = await storage.getRoomState(roomId);
+            const existingMessages = roomState?.chatbotMessages || [];
+            const newMessages = [
+              ...existingMessages,
+              { id: Date.now().toString(), role: "user" as const, content: message, timestamp: Date.now() },
+              { id: (Date.now() + 1).toString(), role: "assistant" as const, content: response, timestamp: Date.now() },
+            ];
+            await storage.updateRoomState(roomId, {
+              chatbotMessages: newMessages.slice(-50),
+            });
+          } catch (error) {
+            console.error("[Chatbot] Failed to save messages:", error);
+          }
+        }
+        
+        res.json({ response });
+        return;
+      }
+
+      console.log("[Chatbot] OpenAI API key found, initializing client...");
+
+      // Initialize OpenAI client
+      // The OpenAI SDK automatically adds "Authorization: Bearer <apiKey>" header to all requests
+      let openai: OpenAI;
+      try {
+        openai = new OpenAI({
+          apiKey: openaiApiKey,
+          // The SDK automatically sets: Authorization: Bearer ${apiKey}
+        });
+        console.log("[Chatbot] OpenAI client initialized successfully");
+        console.log("[Chatbot] Authorization header will be set automatically by SDK");
+      } catch (error: any) {
+        console.error("[Chatbot] Failed to initialize OpenAI client:", error);
+        res.status(500).json({ message: "Failed to initialize AI service", error: error.message });
+        return;
+      }
+
+      // Get room context if roomId is provided
+      let roomContext = "";
+      if (roomId) {
+        try {
+          const room = await storage.getRoom(roomId);
+          if (room) {
+            roomContext = `You are helping in a coding room named "${room.name}". `;
+          }
+        } catch (error) {
+          // Room not found or access denied, continue without context
+        }
+      }
+
+      // Build conversation context
+      const systemPrompt = `${roomContext}You are an expert coding assistant helping developers with:
+- Explaining programming concepts and terms
+- Fixing syntax errors
+- Debugging code issues
+- Code optimization suggestions
+- Best practices and patterns
+- Code reviews
+
+Provide clear, concise, and helpful responses. Format code blocks with proper syntax highlighting using markdown code blocks with language tags.`;
+
+      // Build messages array for OpenAI
+      const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+        { role: "system", content: systemPrompt },
+      ];
+
+      // Add conversation history
+      if (conversationHistory && Array.isArray(conversationHistory)) {
+        conversationHistory.forEach((msg: { role: string; content: string }) => {
+          if (msg.role === "user" || msg.role === "assistant") {
+            messages.push({
+              role: msg.role as "user" | "assistant",
+              content: msg.content,
+            });
+          }
+        });
+      }
+
+      // Add current message
+      messages.push({ role: "user", content: message });
+
+      // Set up streaming response
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // Disable buffering for nginx
+
+      // Create streaming completion
+      let stream: any;
+      try {
+        const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+        console.log("[Chatbot] Creating OpenAI completion with model:", model);
+        
+        // Some newer models (like gpt-5-nano) have different parameter requirements
+        const isNewerModel = model.includes("gpt-5") || model.includes("o3");
+        const completionParams: any = {
+          model: model,
+          messages: messages as any,
+          stream: true,
+        };
+        
+        // Newer models don't support custom temperature (only default 1)
+        // and use max_completion_tokens instead of max_tokens
+        if (isNewerModel) {
+          completionParams.max_completion_tokens = 2000;
+          // Don't set temperature for newer models - they only support default (1)
+        } else {
+          completionParams.temperature = 0.7;
+          completionParams.max_tokens = 2000;
+        }
+        
+        stream = await openai.chat.completions.create(completionParams);
+        console.log("[Chatbot] Stream created successfully");
+      } catch (error: any) {
+        console.error("[Chatbot] OpenAI API error:", error);
+        console.error("[Chatbot] Error details:", {
+          message: error.message,
+          status: error.status,
+          response: error.response?.data
+        });
+        
+        // Fallback to static Q&A on error
+        if (!res.headersSent) {
+          console.log("[Chatbot] Falling back to static Q&A system");
+          const fallbackResponse = await generateChatbotResponse("", message, conversationHistory || []);
+          
+          // Save to room state
+          if (roomId) {
+            try {
+              const roomState = await storage.getRoomState(roomId);
+              const existingMessages = roomState?.chatbotMessages || [];
+              const newMessages = [
+                ...existingMessages,
+                { id: Date.now().toString(), role: "user" as const, content: message, timestamp: Date.now() },
+                { id: (Date.now() + 1).toString(), role: "assistant" as const, content: fallbackResponse, timestamp: Date.now() },
+              ];
+              await storage.updateRoomState(roomId, {
+                chatbotMessages: newMessages.slice(-50),
+              });
+            } catch (saveError) {
+              console.error("[Chatbot] Failed to save fallback messages:", saveError);
+            }
+          }
+          
+          res.json({ 
+            response: fallbackResponse,
+            fallback: true,
+            error: "AI service temporarily unavailable, using fallback responses"
+          });
+        } else {
+          res.write(`data: ${JSON.stringify({ error: "AI service error, please try again" })}\n\n`);
+          res.end();
+        }
+        return;
+      }
+
+      // Stream the response
+      let fullResponse = "";
+      try {
+        for await (const chunk of stream) {
+          const content = chunk.choices[0]?.delta?.content || "";
+          if (content) {
+            fullResponse += content;
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          }
+        }
+
+        // Send completion signal
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+
+        // Save messages to room state if roomId is provided
+        if (roomId && fullResponse) {
+          try {
+            const roomState = await storage.getRoomState(roomId);
+            const existingMessages = roomState?.chatbotMessages || [];
+            const newMessages = [
+              ...existingMessages,
+              { id: Date.now().toString(), role: "user" as const, content: message, timestamp: Date.now() },
+              { id: (Date.now() + 1).toString(), role: "assistant" as const, content: fullResponse, timestamp: Date.now() },
+            ];
+            // Keep only last 50 messages to prevent storage bloat
+            await storage.updateRoomState(roomId, {
+              chatbotMessages: newMessages.slice(-50),
+            });
+          } catch (error) {
+            console.error("[Chatbot] Failed to save messages to room state:", error);
+          }
+        }
+      } catch (streamError: any) {
+        console.error("Streaming error:", streamError);
+        if (!res.headersSent) {
+          res.status(500).json({ message: "Streaming error occurred" });
+        } else {
+          res.write(`data: ${JSON.stringify({ error: "Streaming interrupted" })}\n\n`);
+          res.end();
+        }
+      }
+    } catch (error: any) {
+      console.error("Chatbot error:", error);
+      console.error("Error stack:", error.stack);
+      
+      // If streaming already started, send error as data
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ error: error.message || "Failed to generate response" })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ 
+          message: error.message || "Failed to generate response",
+          details: process.env.NODE_ENV === "development" ? error.stack : undefined
+        });
+      }
+    }
+  });
+
+  // Get chatbot messages for a room
+  app.get("/api/rooms/:id/chatbot-messages", authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const membership = await storage.getMembership(req.userId!, id);
+
+      if (!membership) {
+        res.status(403).json({ message: "Not a member of this room" });
+        return;
+      }
+
+      const roomState = await storage.getRoomState(id);
+      res.json({ messages: roomState?.chatbotMessages || [] });
+    } catch (error) {
+      console.error("Get chatbot messages error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   return httpServer;
+}
+
+// Chatbot response generation - moved to chatbot-fallback.ts
+// Keeping this for backward compatibility, but using imported version
+async function generateChatbotResponseOld(
+  systemPrompt: string,
+  userMessage: string,
+  conversationHistory: Array<{ role: string; content: string }>
+): Promise<string> {
+  // For now, return a helpful response based on common patterns
+  // In production, replace this with actual AI API calls
+  
+  const lowerMessage = userMessage.toLowerCase();
+  
+  // Python-specific help
+  if (lowerMessage.includes("python") || lowerMessage.includes("py")) {
+    if (lowerMessage.includes("error") || lowerMessage.includes("exception")) {
+      return `I can help you with Python errors! Common Python errors include:
+
+1. **IndentationError**: Python uses indentation to define code blocks. Make sure your indentation is consistent (use 4 spaces or tabs, but not both).
+
+2. **SyntaxError**: Check for:
+   - Missing colons (:) after if/for/while/def statements
+   - Unmatched parentheses, brackets, or quotes
+   - Incorrect indentation
+
+3. **NameError**: Variable or function name not defined. Check for typos or if the variable is defined before use.
+
+4. **TypeError**: Usually means you're using the wrong data type (e.g., trying to add a string to an integer).
+
+5. **IndexError**: Trying to access a list/string index that doesn't exist.
+
+6. **KeyError**: Trying to access a dictionary key that doesn't exist.
+
+Share the specific error message and I can help you fix it! For example:
+\`\`\`python
+# Your code here
+\`\`\``;
+    }
+    
+    return `I can help with Python! Common Python issues:
+
+• **Syntax errors**: Missing colons, incorrect indentation, unmatched brackets
+• **Indentation**: Python requires consistent indentation (4 spaces recommended)
+• **Import errors**: Module not found - check if it's installed
+• **Type errors**: Wrong data type being used
+• **Logic errors**: Code runs but doesn't produce expected results
+
+Share your code or error message and I'll help you debug it!`;
+  }
+  
+  // Simple pattern matching for common questions
+  if (lowerMessage.includes("syntax error") || lowerMessage.includes("syntax")) {
+    return `I can help you fix syntax errors! Here are common issues to check:
+
+1. **Missing brackets/parentheses**: Ensure all opening brackets have matching closing ones
+2. **Semicolons**: Some languages require semicolons at the end of statements
+3. **Quotes**: Make sure strings are properly quoted (single or double quotes)
+4. **Indentation**: Python and some languages are sensitive to indentation
+5. **Variable names**: Check for typos in variable and function names
+
+If you share the specific error message or code snippet, I can provide more targeted help!`;
+  }
+
+  if (lowerMessage.includes("debug") || lowerMessage.includes("error")) {
+    return `To debug effectively, try these steps:
+
+1. **Read the error message carefully**: It usually tells you the file, line number, and type of error
+2. **Check the stack trace**: It shows the sequence of function calls leading to the error
+3. **Use console.log/print statements**: Add logging to track variable values
+4. **Use a debugger**: Set breakpoints and step through your code
+5. **Isolate the problem**: Comment out sections to find the problematic code
+
+Share your error message or code, and I'll help you debug it!`;
+  }
+
+  if (lowerMessage.includes("explain") || lowerMessage.includes("what is") || lowerMessage.includes("how does")) {
+    return `I'd be happy to explain! Could you provide more context about what you'd like me to explain? For example:
+
+- A specific programming concept
+- A code snippet you're working with
+- A term or technology you're unfamiliar with
+- How a particular feature or function works
+
+The more details you share, the better I can help!`;
+  }
+
+  if (lowerMessage.includes("optimize") || lowerMessage.includes("performance")) {
+    return `Here are general optimization strategies:
+
+1. **Algorithm complexity**: Use efficient algorithms (O(n log n) vs O(n²))
+2. **Avoid unnecessary loops**: Combine operations when possible
+3. **Cache results**: Store computed values that don't change
+4. **Use appropriate data structures**: Arrays vs Hash Maps vs Sets
+5. **Lazy loading**: Load data only when needed
+6. **Database queries**: Optimize queries, use indexes, avoid N+1 queries
+
+Share your code and I can provide specific optimization suggestions!`;
+  }
+
+  // Default helpful response
+  return `I'm here to help with your coding questions! I can assist with:
+
+• **Code explanations**: Understanding how code works
+• **Syntax errors**: Finding and fixing syntax issues
+• **Debugging**: Identifying and resolving bugs
+• **Optimization**: Improving code performance
+• **Best practices**: Following coding standards
+
+Feel free to ask me about:
+- Specific error messages you're seeing
+- Code snippets you'd like explained
+- Programming concepts you're learning
+- How to implement a feature
+
+What would you like help with?`;
 }

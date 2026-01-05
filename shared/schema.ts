@@ -52,6 +52,16 @@ export const insertRoomSchema = z.object({
 export type Room = z.infer<typeof roomSchema>;
 export type InsertRoom = z.infer<typeof insertRoomSchema>;
 
+// Chatbot Message Schema
+export const chatbotMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  timestamp: z.number(),
+});
+
+export type ChatbotMessage = z.infer<typeof chatbotMessageSchema>;
+
 // Room State Schema (for whiteboard and code)
 export const roomStateSchema = z.object({
   roomId: z.string(),
@@ -59,6 +69,7 @@ export const roomStateSchema = z.object({
   codeContent: z.string().default("// Start coding here...\n"),
   codeLanguage: z.string().default("javascript"),
   webFiles: z.record(z.string()).optional(),
+  chatbotMessages: z.array(chatbotMessageSchema).default([]),
   lastUpdatedAt: z.string(),
 });
 

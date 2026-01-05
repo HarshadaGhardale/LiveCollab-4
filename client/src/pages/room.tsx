@@ -30,6 +30,8 @@ import { VideoChat } from "@/components/collaboration/video-chat";
 import { ActiveUsersList, PresenceOverlay } from "@/components/collaboration/presence-overlay";
 import { MembersPanel } from "@/components/collaboration/members-panel";
 import { Chat, type Message } from "@/components/collaboration/chat";
+import { CodingAssistant } from "@/components/collaboration/coding-assistant";
+import { Bot } from "lucide-react";
 import {
   getSocket,
   connectSocket,
@@ -146,6 +148,7 @@ export default function Room() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [showMembers, setShowMembers] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showCodingAssistant, setShowCodingAssistant] = useState(false);
   const showChatRef = useRef(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -401,6 +404,20 @@ export default function Room() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowCodingAssistant(!showCodingAssistant)}
+                className="h-9 w-9 text-muted-foreground hover:text-foreground bg-transparent hover:bg-transparent"
+                data-testid="button-coding-assistant"
+              >
+                <Bot className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Coding Assistant</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
                 variant={showMembers ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => setShowMembers(!showMembers)}
@@ -608,7 +625,12 @@ export default function Room() {
       </div>
 
       {/* Video chat */}
-      <VideoChat roomId={room.id} participants={participants} />
+      <VideoChat roomId={room.id} participants={participants} /> 
+      <CodingAssistant 
+        roomId={room.id} 
+        isOpen={showCodingAssistant}
+        onOpenChange={setShowCodingAssistant}
+      />
     </div>
   );
 }

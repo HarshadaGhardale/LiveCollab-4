@@ -48,6 +48,7 @@ const roomStateSchema = new Schema<IRoomStateDoc>({
   codeContent: { type: String, default: "// Start coding here...\n" },
   codeLanguage: { type: String, default: "javascript" },
   webFiles: { type: Object },
+  chatbotMessages: { type: Array, default: [] },
   lastUpdatedAt: { type: String, required: true },
 });
 
