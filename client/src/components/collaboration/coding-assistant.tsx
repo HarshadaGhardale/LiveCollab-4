@@ -391,7 +391,7 @@ export function CodingAssistant({ roomId, isOpen: controlledIsOpen, onOpenChange
                 >
                   <Avatar className="h-10 w-10 bg-gradient-to-br from-primary via-primary/80 to-primary/60 shadow-lg">
                     <AvatarFallback className="bg-transparent">
-                      <Bot className="h-10 w-10 text-primary-foreground"/>
+                      <Bot className="h-18 w-18 text-primary-foreground"/>
                     </AvatarFallback>
                   </Avatar>
                   <motion.div 
