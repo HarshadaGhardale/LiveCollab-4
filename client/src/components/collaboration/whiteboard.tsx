@@ -1,10 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Canvas, PencilBrush, Rect, Circle as FabricCircle, Line, IText, FabricObject, TPointerEventInfo, TPointerEvent } from "fabric";
+import { Canvas, PencilBrush, Rect, Circle as FabricCircle, Line, IText, FabricObject, TPointerEventInfo, TPointerEvent, FabricImage } from "fabric";
 import { motion } from "framer-motion";
-import { 
-  Download, 
-  Undo2, 
-  Redo2, 
+import {
+  Download,
+  Undo2,
+  Redo2,
   Trash2,
   MousePointer2,
   Pencil,
@@ -12,7 +12,8 @@ import {
   Square,
   Circle as CircleIcon,
   Minus,
-  Type
+  Type,
+  Image as ImageIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -39,6 +40,7 @@ interface WhiteboardProps {
 export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
@@ -62,17 +64,17 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
   const saveToHistory = useCallback(() => {
     if (!fabricRef.current) return;
     const json = JSON.stringify(fabricRef.current.toJSON());
-    
+
     historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
     historyRef.current.push(json);
     historyIndexRef.current = historyRef.current.length - 1;
-    
+
     setUndoRedo(historyIndexRef.current > 0, false);
   }, [setUndoRedo]);
 
   const handleUndo = useCallback(() => {
     if (!fabricRef.current || historyIndexRef.current <= 0) return;
-    
+
     historyIndexRef.current--;
     const json = historyRef.current[historyIndexRef.current];
     fabricRef.current.loadFromJSON(JSON.parse(json)).then(() => {
@@ -81,7 +83,7 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
         historyIndexRef.current > 0,
         historyIndexRef.current < historyRef.current.length - 1
       );
-      
+
       emitWhiteboardEvent(roomId, {
         type: "undo",
         data: json,
@@ -92,7 +94,7 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
 
   const handleRedo = useCallback(() => {
     if (!fabricRef.current || historyIndexRef.current >= historyRef.current.length - 1) return;
-    
+
     historyIndexRef.current++;
     const json = historyRef.current[historyIndexRef.current];
     fabricRef.current.loadFromJSON(JSON.parse(json)).then(() => {
@@ -101,7 +103,7 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
         historyIndexRef.current > 0,
         historyIndexRef.current < historyRef.current.length - 1
       );
-      
+
       emitWhiteboardEvent(roomId, {
         type: "redo",
         data: json,
@@ -116,7 +118,7 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
     fabricRef.current.backgroundColor = "#ffffff";
     fabricRef.current.renderAll();
     saveToHistory();
-    
+
     emitWhiteboardEvent(roomId, {
       type: "clear",
       userId: user?.id,
@@ -130,12 +132,59 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
       quality: 1,
       multiplier: 2,
     });
-    
+
     const link = document.createElement("a");
     link.download = `whiteboard-${roomId}-${Date.now()}.png`;
     link.href = dataUrl;
     link.click();
   }, [roomId]);
+
+  const handleImageClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !fabricRef.current) return;
+
+    const reader = new FileReader();
+    reader.onload = async (f) => {
+      const data = f.target?.result as string;
+      if (data) {
+        try {
+          const img = await FabricImage.fromURL(data);
+          const canvas = fabricRef.current;
+          if (!canvas) return;
+
+          // Scale down if too big
+          const maxSize = Math.min(canvas.width || 800, canvas.height || 600) * 0.5;
+          const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+
+          img.scale(scale);
+          img.set({
+            left: (canvas.width || 0) / 2 - (img.width * scale) / 2,
+            top: (canvas.height || 0) / 2 - (img.height * scale) / 2
+          });
+
+          canvas.add(img);
+          canvas.setActiveObject(img);
+          canvas.renderAll();
+          saveToHistory();
+
+          emitWhiteboardEvent(roomId, {
+            type: "object-added",
+            data: JSON.stringify(canvas.toJSON()),
+            userId: user?.id,
+          });
+        } catch (err) {
+          console.error("Error loading image", err);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+    // Reset input
+    e.target.value = "";
+  }, [roomId, user?.id, saveToHistory]);
 
   // Initialize canvas
   useEffect(() => {
@@ -201,7 +250,7 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
     const socket = getSocket();
     const handleWhiteboardEvent = (event: any) => {
       if (event.userId === user?.id) return; // Ignore own events
-      
+
       if (event.type === "clear") {
         canvas.clear();
         canvas.backgroundColor = "#ffffff";
@@ -351,6 +400,14 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
 
   return (
     <div className="flex flex-col h-full bg-card rounded-md border overflow-hidden">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImageUpload}
+        accept="image/*"
+        className="hidden"
+        data-testid="input-whiteboard-image"
+      />
       {/* Header */}
       <div className="h-10 px-3 flex items-center justify-between gap-2 border-b bg-card shrink-0">
         <span className="text-sm font-medium">Whiteboard</span>
@@ -414,6 +471,21 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
             </TooltipTrigger>
             <TooltipContent>Export PNG</TooltipContent>
           </Tooltip>
+          <div className="w-px h-4 bg-border mx-1" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleImageClick}
+                data-testid="button-whiteboard-image"
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Insert Image</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -452,9 +524,8 @@ export function Whiteboard({ roomId, onEvent, initialData }: WhiteboardProps) {
           {COLOR_PALETTE.slice(0, 8).map((color) => (
             <button
               key={color}
-              className={`w-6 h-6 rounded-md border-2 transition-all ${
-                activeColor === color ? "scale-110 ring-2 ring-offset-1 ring-primary" : ""
-              }`}
+              className={`w-6 h-6 rounded-md border-2 transition-all ${activeColor === color ? "scale-110 ring-2 ring-offset-1 ring-primary" : ""
+                }`}
               style={{ backgroundColor: color, borderColor: color === "#FFFFFF" ? "#e5e7eb" : color }}
               onClick={() => setActiveColor(color)}
               data-testid={`button-color-${color.slice(1)}`}
