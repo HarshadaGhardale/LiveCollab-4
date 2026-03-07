@@ -195,6 +195,52 @@ export async function registerRoutes(
       }
     });
 
+    // Code execution streaming events
+    socket.on("execute:start", async ({ code, language, roomId }) => {
+      if (!roomId) return;
+      console.log(`[EXEC] Starting ${language} execution in room ${roomId}`);
+      try {
+        const { startInteractiveExecution } = await import("./execution");
+        // We will broadcast the output to the entire room so everyone sees it
+        const onData = (data: string) => {
+          console.log(`[EXEC OUT] ${roomId}:`, data.substring(0, 50));
+          io.to(roomId).emit("execute:output", { data });
+        };
+        const onExit = (exitCode: number) => {
+          console.log(`[EXEC EXIT] ${roomId} with code ${exitCode}`);
+          io.to(roomId).emit("execute:exit", { exitCode });
+        };
+
+        const executeSessionId = await startInteractiveExecution(code, language, roomId, onData, onExit);
+        console.log(`[EXEC] Session ${executeSessionId} started successfully`);
+        socket.emit("execute:started", { executeSessionId });
+      } catch (err: any) {
+        console.error(`[EXEC ERROR] Failed to start execution:`, err.message);
+        socket.emit("execute:output", { data: `\r\nError starting execution: ${err.message}\r\n` });
+        socket.emit("execute:exit", { exitCode: 1 });
+      }
+    });
+
+    socket.on("execute:input", async ({ roomId, data }) => {
+      if (!roomId) return;
+      try {
+        const { writeInteractiveInput } = await import("./execution");
+        writeInteractiveInput(roomId, data);
+      } catch (err) {
+        // ignore
+      }
+    });
+
+    socket.on("execute:stop", async ({ roomId }) => {
+      if (!roomId) return;
+      try {
+        const { stopInteractiveExecution } = await import("./execution");
+        stopInteractiveExecution(roomId);
+      } catch (err) {
+        // ignore
+      }
+    });
+
     // Chat events
     socket.on("chat:message", ({ roomId, message }) => {
       if (!roomId || userData.roomId !== roomId) return;
@@ -462,11 +508,17 @@ export async function registerRoutes(
       if (emailSent) {
         res.json({ message: "If an account exists, a reset link has been sent." });
       } else {
-        // If email fails, we log it but still return generic success or 500?
-        // Usually better to return 500 or verify configuration if email is critical.
-        // For now, let's return 500 so they know it failed.
+        // If email fails, we log it but handle dev environment gracefully
         console.error("Failed to send reset email");
-        res.status(500).json({ message: "Failed to send reset email. Please try again later." });
+
+        if (process.env.NODE_ENV === "development") {
+          res.json({
+            message: "Email failed, but here is the reset link (DEV ONLY).",
+            devToken: token
+          });
+        } else {
+          res.status(500).json({ message: "Failed to send reset email. Please try again later." });
+        }
       }
     } catch (error) {
       console.error("Forgot password error:", error);
@@ -876,7 +928,7 @@ export async function registerRoutes(
   // Execute code
   app.post("/api/execute-code", authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const { code, language } = req.body;
+      const { code, language, input } = req.body;
 
       if (!code) {
         res.status(400).json({ message: "Code is required" });
@@ -889,7 +941,7 @@ export async function registerRoutes(
       if (lang === "cpp") lang = "c++";
       if (lang === "py") lang = "python";
 
-      const result = await executeCode(code, lang);
+      const result = await executeCode(code, lang, input || "");
 
       res.json({
         success: result.success,
@@ -924,7 +976,7 @@ export async function registerRoutes(
           message,
           conversationHistory || []
         );
-        
+
         // Save to room state if roomId provided
         if (roomId) {
           try {
@@ -942,7 +994,7 @@ export async function registerRoutes(
             console.error("[Chatbot] Failed to save messages:", error);
           }
         }
-        
+
         res.json({ response });
         return;
       }
@@ -1020,7 +1072,7 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
       try {
         const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
         console.log("[Chatbot] Creating OpenAI completion with model:", model);
-        
+
         // Some newer models (like gpt-5-nano) have different parameter requirements
         const isNewerModel = model.includes("gpt-5") || model.includes("o3");
         const completionParams: any = {
@@ -1028,7 +1080,7 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
           messages: messages as any,
           stream: true,
         };
-        
+
         // Newer models don't support custom temperature (only default 1)
         // and use max_completion_tokens instead of max_tokens
         if (isNewerModel) {
@@ -1038,7 +1090,7 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
           completionParams.temperature = 0.7;
           completionParams.max_tokens = 2000;
         }
-        
+
         stream = await openai.chat.completions.create(completionParams);
         console.log("[Chatbot] Stream created successfully");
       } catch (error: any) {
@@ -1048,12 +1100,12 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
           status: error.status,
           response: error.response?.data
         });
-        
+
         // Fallback to static Q&A on error
         if (!res.headersSent) {
           console.log("[Chatbot] Falling back to static Q&A system");
           const fallbackResponse = await generateChatbotResponse("", message, conversationHistory || []);
-          
+
           // Save to room state
           if (roomId) {
             try {
@@ -1071,8 +1123,8 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
               console.error("[Chatbot] Failed to save fallback messages:", saveError);
             }
           }
-          
-          res.json({ 
+
+          res.json({
             response: fallbackResponse,
             fallback: true,
             error: "AI service temporarily unavailable, using fallback responses"
@@ -1129,13 +1181,13 @@ Provide clear, concise, and helpful responses. Format code blocks with proper sy
     } catch (error: any) {
       console.error("Chatbot error:", error);
       console.error("Error stack:", error.stack);
-      
+
       // If streaming already started, send error as data
       if (res.headersSent) {
         res.write(`data: ${JSON.stringify({ error: error.message || "Failed to generate response" })}\n\n`);
         res.end();
       } else {
-        res.status(500).json({ 
+        res.status(500).json({
           message: error.message || "Failed to generate response",
           details: process.env.NODE_ENV === "development" ? error.stack : undefined
         });
@@ -1174,9 +1226,9 @@ async function generateChatbotResponseOld(
 ): Promise<string> {
   // For now, return a helpful response based on common patterns
   // In production, replace this with actual AI API calls
-  
+
   const lowerMessage = userMessage.toLowerCase();
-  
+
   // Python-specific help
   if (lowerMessage.includes("python") || lowerMessage.includes("py")) {
     if (lowerMessage.includes("error") || lowerMessage.includes("exception")) {
@@ -1202,7 +1254,7 @@ Share the specific error message and I can help you fix it! For example:
 # Your code here
 \`\`\``;
     }
-    
+
     return `I can help with Python! Common Python issues:
 
 • **Syntax errors**: Missing colons, incorrect indentation, unmatched brackets
@@ -1213,7 +1265,7 @@ Share the specific error message and I can help you fix it! For example:
 
 Share your code or error message and I'll help you debug it!`;
   }
-  
+
   // Simple pattern matching for common questions
   if (lowerMessage.includes("syntax error") || lowerMessage.includes("syntax")) {
     return `I can help you fix syntax errors! Here are common issues to check:

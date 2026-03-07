@@ -10,6 +10,7 @@ import { emitCodeEvent, getSocket } from "@/lib/socket";
 import { CODE_LANGUAGES } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import type { editor } from "monaco-editor";
+import { Terminal as InteractiveTerminal } from "./terminal";
 
 interface CodeEditorProps {
   roomId: string;
@@ -120,7 +121,6 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
 
     setIsRunning(true);
     setShowOutput(true);
-    setOutput(null);
 
     // Clear previous markers
     if (editorRef.current) {
@@ -133,76 +133,26 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
     }
 
     try {
-      const res = await apiRequest("POST", "/api/execute-code", {
+      const socket = getSocket();
+      socket.emit("execute:start", {
         code: content,
-        language: language,
+        language,
+        roomId
       });
 
-      const data = await res.json();
+      // The socket event execute:started, execute:output, and execute:exit 
+      // are handled by the Terminal component. We just wait for exit to stop the spinner.
+      const handleExit = () => {
+        setIsRunning(false);
+        socket.off("execute:exit", handleExit);
+      };
 
-      let outputText = "";
-      if (data.output) outputText += data.output + "\n";
-      if (data.result !== undefined && data.result !== null) outputText += `Result: ${JSON.stringify(data.result, null, 2)}\n`;
+      socket.on("execute:exit", handleExit);
 
-      if (data.errors) {
-        outputText += `Error: ${data.errors}\n`;
-
-        // Try to parse line numbers from error for highlighting
-        // GCC/Clang format: file.c:10:5: error: ...
-        // Python format: File "...", line 10
-        if (editorRef.current) {
-          const model = editorRef.current.getModel();
-          if (model) {
-            import("monaco-editor").then(monaco => {
-              const markers: editor.IMarkerData[] = [];
-              const lines = data.errors.split('\n');
-
-              for (const line of lines) {
-                // C/C++/Java regex: file.ext:line:col: or file.ext:line:
-                const commonMatch = line.match(/:(\d+)(?::(\d+))?:?/);
-                if (commonMatch) {
-                  const lineNumber = parseInt(commonMatch[1]);
-                  const column = commonMatch[2] ? parseInt(commonMatch[2]) : 1;
-                  markers.push({
-                    severity: monaco.MarkerSeverity.Error,
-                    message: line,
-                    startLineNumber: lineNumber,
-                    startColumn: column,
-                    endLineNumber: lineNumber,
-                    endColumn: column + 100 // Highlight rest of line
-                  });
-                }
-
-                // Python regex
-                const pyMatch = line.match(/line (\d+)/);
-                if (pyMatch && language.includes("python")) {
-                  const lineNumber = parseInt(pyMatch[1]);
-                  markers.push({
-                    severity: monaco.MarkerSeverity.Error,
-                    message: line,
-                    startLineNumber: lineNumber,
-                    startColumn: 1,
-                    endLineNumber: lineNumber,
-                    endColumn: 1000
-                  });
-                }
-              }
-
-              monaco.editor.setModelMarkers(model, "owner", markers);
-            });
-          }
-        }
-      }
-
-      if (!outputText) outputText = "Code executed successfully (no output)";
-
-      setOutput(outputText);
     } catch (error) {
-      setOutput(`Failed to execute code: ${error}`);
-    } finally {
       setIsRunning(false);
     }
-  }, [content, language]);
+  }, [content, language, roomId]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content);
@@ -316,6 +266,15 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
           <div className="w-px h-4 bg-border mx-1" />
           <Button
             size="sm"
+            variant="ghost"
+            className={`h-7 text-xs ${showOutput ? "bg-accent" : ""}`}
+            onClick={() => { setShowOutput(!showOutput); }}
+            data-testid="button-code-terminal"
+          >
+            Output
+          </Button>
+          <Button
+            size="sm"
             className="h-7 gap-1.5 bg-green-600 hover:bg-green-700 text-white"
             onClick={handleRun}
             disabled={isRunning}
@@ -362,40 +321,43 @@ export function CodeEditor({ roomId, initialContent = "// Start coding here...\n
         />
       </div>
 
-      {/* Output Panel */}
+
+      {/* Output Panel / Terminal */}
       <AnimatePresence>
         {showOutput && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "30%", opacity: 1 }}
+            animate={{ height: "40%", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="border-t bg-zinc-950 text-zinc-50 flex flex-col shrink-0"
           >
             <div className="h-8 px-3 flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50">
-              <div className="flex items-center gap-2 text-xs font-medium text-zinc-400">
+              <div className="flex items-center gap-2 text-xs font-medium text-zinc-300">
                 <Terminal className="h-3.5 w-3.5" />
-                <span>Console Output</span>
+                <span>Console</span>
               </div>
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 text-zinc-400 hover:text-zinc-100"
-                onClick={() => setShowOutput(false)}
+                onClick={() => {
+                  setShowOutput(false);
+                  const socket = getSocket();
+                  socket.emit("execute:stop", { roomId });
+                  setIsRunning(false);
+                }}
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
-            <div className="flex-1 p-3 overflow-auto font-mono text-xs whitespace-pre-wrap">
-              {isRunning ? (
-                <div className="flex items-center gap-2 text-zinc-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>Running code...</span>
+            <div className="flex-1 overflow-hidden relative">
+              {isRunning && (
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-zinc-500 text-xs bg-zinc-900/80 px-2 py-1 rounded-md">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Executing...</span>
                 </div>
-              ) : output ? (
-                output
-              ) : (
-                <span className="text-zinc-600 italic">No output</span>
               )}
+              {showOutput && <InteractiveTerminal roomId={roomId} onExit={() => setIsRunning(false)} />}
             </div>
           </motion.div>
         )}

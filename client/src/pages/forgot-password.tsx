@@ -18,6 +18,7 @@ const forgotPasswordSchema = z.object({
 export default function ForgotPassword() {
     const { toast } = useToast();
     const [isSuccess, setIsSuccess] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
 
     const form = useForm<z.infer<typeof forgotPasswordSchema>>({
         resolver: zodResolver(forgotPasswordSchema),
@@ -27,6 +28,7 @@ export default function ForgotPassword() {
     });
 
     async function onSubmit(values: z.infer<typeof forgotPasswordSchema>) {
+        setIsLoading(true);
         try {
             const res = await apiRequest("POST", "/api/auth/forgot-password", values);
             const data = await res.json();
@@ -43,9 +45,11 @@ export default function ForgotPassword() {
         } catch (error: any) {
             toast({
                 title: "Error",
-                description: error.message,
+                description: error.message || "Failed to send reset link",
                 variant: "destructive",
             });
+        } finally {
+            setIsLoading(false);
         }
     }
 
@@ -84,8 +88,8 @@ export default function ForgotPassword() {
                                         </FormItem>
                                     )}
                                 />
-                                <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-                                    {form.formState.isSubmitting && (
+                                <Button type="submit" className="w-full" disabled={isLoading}>
+                                    {isLoading && (
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     )}
                                     Send Reset Link

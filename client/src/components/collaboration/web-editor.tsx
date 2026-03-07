@@ -16,7 +16,9 @@ import {
     FileType,
     FolderOpen,
     ChevronRight,
-    ChevronDown
+    ChevronDown,
+    Plus,
+    X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -53,6 +55,8 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
     const isRemoteUpdate = useRef(false);
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [isFolderOpen, setIsFolderOpen] = useState(true);
+    const [showNewFileForm, setShowNewFileForm] = useState(false);
+    const [newFileName, setNewFileName] = useState("");
 
     // Update local state when initialFiles changes
     useEffect(() => {
@@ -62,16 +66,24 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
     }, [initialFiles]);
 
     const getSrcDoc = useCallback(() => {
-        const { "index.html": html, "style.css": css, "script.js": js } = files;
+        const html = files["index.html"] || "";
+        let cssTags = "";
+        let jsTags = "";
+
+        Object.entries(files).forEach(([filename, content]) => {
+            if (filename.endsWith('.css')) cssTags += `<style>\n${content}\n</style>\n`;
+            if (filename.endsWith('.js')) jsTags += `<script>\n${content}\n</script>\n`;
+        });
+
         return `
       <!DOCTYPE html>
       <html>
         <head>
-          <style>${css}</style>
+          ${cssTags}
         </head>
         <body>
           ${html}
-          <script>${js}<\/script>
+          ${jsTags}
         </body>
       </html>
     `;
@@ -185,9 +197,9 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
 
     const handleExport = async () => {
         const zip = new JSZip();
-        zip.file("index.html", files["index.html"]);
-        zip.file("style.css", files["style.css"]);
-        zip.file("script.js", files["script.js"]);
+        Object.entries(files).forEach(([filename, content]) => {
+            zip.file(filename, content);
+        });
 
         const content = await zip.generateAsync({ type: "blob" });
         saveAs(content, "project.zip");
@@ -241,26 +253,79 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
                     </div>
                     <div className="px-2">
                         <div
-                            className="flex items-center gap-1.5 px-2 py-1.5 text-sm hover:bg-accent rounded-sm cursor-pointer select-none"
-                            onClick={() => setIsFolderOpen(!isFolderOpen)}
+                            className="flex items-center justify-between px-2 py-1.5 hover:bg-accent rounded-sm group select-none"
                         >
-                            {isFolderOpen ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                            )}
-                            <FolderOpen className="h-4 w-4 text-sky-500" />
-                            <span className="font-medium">Project</span>
+                            <div className="flex items-center gap-1.5 cursor-pointer flex-1" onClick={() => setIsFolderOpen(!isFolderOpen)}>
+                                {isFolderOpen ? (
+                                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                )}
+                                <FolderOpen className="h-4 w-4 text-sky-500" />
+                                <span className="font-medium text-sm">Project</span>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowNewFileForm(true);
+                                    setIsFolderOpen(true);
+                                }}
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                            </Button>
                         </div>
 
                         {isFolderOpen && (
                             <div className="ml-4 mt-1 space-y-0.5">
+                                {showNewFileForm && (
+                                    <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                                        <FileCode className="h-4 w-4 text-muted-foreground" />
+                                        <input
+                                            autoFocus
+                                            type="text"
+                                            className="flex-1 bg-background border px-1.5 py-0.5 text-xs rounded-sm outline-none focus:border-primary"
+                                            placeholder="filename.ext"
+                                            value={newFileName}
+                                            onChange={(e) => setNewFileName(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" && newFileName.trim()) {
+                                                    const name = newFileName.trim();
+                                                    if (!files[name]) {
+                                                        const newFiles = { ...files, [name]: "" };
+                                                        setFiles(newFiles);
+                                                        setActiveFile(name);
+                                                        saveFiles(newFiles);
+                                                        if (user) {
+                                                            emitCodeEvent(roomId, {
+                                                                type: "change",
+                                                                data: { file: name, content: "" },
+                                                                userId: user.id
+                                                            });
+                                                        }
+                                                    }
+                                                    setNewFileName("");
+                                                    setShowNewFileForm(false);
+                                                } else if (e.key === "Escape") {
+                                                    setNewFileName("");
+                                                    setShowNewFileForm(false);
+                                                }
+                                            }}
+                                            onBlur={() => {
+                                                setNewFileName("");
+                                                setShowNewFileForm(false);
+                                            }}
+                                        />
+                                    </div>
+                                )}
                                 {Object.keys(files).map((fileName) => (
                                     <div
                                         key={fileName}
                                         className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer border-l-2 ${activeFile === fileName
-                                                ? "bg-accent border-primary text-accent-foreground"
-                                                : "border-transparent hover:bg-accent/50 text-muted-foreground hover:text-foreground"
+                                            ? "bg-accent border-primary text-accent-foreground"
+                                            : "border-transparent hover:bg-accent/50 text-muted-foreground hover:text-foreground"
                                             }`}
                                         onClick={() => setActiveFile(fileName)}
                                     >
