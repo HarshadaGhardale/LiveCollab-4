@@ -25,8 +25,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useThemeStore, useAuthStore, useEditorStore } from "@/lib/stores";
 import { getSocket, emitCodeEvent } from "@/lib/socket";
 import { apiRequest } from "@/lib/queryClient";
+import { zipSync, strToU8 } from "fflate";
 
-import { saveAs } from "file-saver";
 import type { editor } from "monaco-editor";
 
 interface WebEditorProps {
@@ -195,17 +195,20 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
         setTimeout(() => setIsRefreshing(false), 500);
     };
 
-    const handleExport = async () => {
-        // Dynamic import avoids Vite ESM/CJS interop bundling issues in production
-        const JSZipLib = await import("jszip");
-        const JSZip = (JSZipLib as any).default ?? JSZipLib;
-        const zip = new JSZip();
+    const handleExport = () => {
+        // fflate is a pure-browser ZIP library — no Node.js Buffer required
+        const fileMap: Record<string, Uint8Array> = {};
         Object.entries(files).forEach(([filename, content]) => {
-            zip.file(filename, content);
+            fileMap[filename] = strToU8(content);
         });
-
-        const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, "project.zip");
+        const zipped = zipSync(fileMap, { level: 6 });
+        const blob = new Blob([zipped.buffer as ArrayBuffer], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "project.zip";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 
     const getFileIcon = (fileName: string) => {
