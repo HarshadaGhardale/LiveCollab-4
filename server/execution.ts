@@ -66,35 +66,39 @@ export async function executeCode(): Promise<{ success: boolean; output: string;
 }
 
 /**
- * JavaScript prompt() shim injected at the top of every JS file so that
- * code using prompt() in Node.js reads synchronously from stdin.
+ * prompt() shim for Node.js (CJS mode, saved as .cjs).
+ * Reads synchronously from stdin so browser-style JS code works in the terminal.
  */
 const JS_PROMPT_SHIM = `
-const { execFileSync } = require('child_process');
+const fs = require('fs');
 function prompt(msg) {
-  if (msg) process.stdout.write(msg);
+  if (msg !== undefined) process.stdout.write(String(msg));
+  const buf = Buffer.alloc(4096);
+  let result = '';
   try {
-    // Read one line synchronously from stdin
-    const buf = Buffer.alloc(1024);
-    let total = '';
-    const fd = require('fs').openSync('/dev/stdin', 'rs');
+    const fd = fs.openSync('/dev/stdin', 'rs');
     while (true) {
-      const n = require('fs').readSync(fd, buf, 0, 1, null);
+      const n = fs.readSync(fd, buf, 0, 1, null);
       if (n === 0) break;
       const ch = buf.slice(0, n).toString();
-      total += ch;
+      result += ch;
       if (ch === '\\n') break;
     }
-    return total.trimEnd();
+    fs.closeSync(fd);
   } catch { return ''; }
+  return result.trimEnd();
 }
 `;
 
 const JS_PROMPT_SHIM_WIN = `
+const readline = require('readline');
 function prompt(msg) {
-  if (msg) process.stdout.write(msg);
-  const lines = require('fs').readFileSync('\\\\.\\\\CON').toString();
-  return lines.split('\\n')[0].trimEnd();
+  if (msg !== undefined) process.stdout.write(String(msg));
+  const buf = Buffer.alloc(4096);
+  try {
+    const n = require('fs').readSync(0, buf, 0, buf.length, null);
+    return buf.slice(0, n).toString().trimEnd();
+  } catch { return ''; }
 }
 `;
 
@@ -129,12 +133,13 @@ export async function startInteractiveExecution(
         } else if (normLang === "javascript" || normLang === "js") {
             const bin = await resolveBinary("node");
             if (!bin) throw new Error(missingToolError("node", "JavaScript"));
-            // Inject a prompt() shim so browser-style JS code works in Node
+            // Inject a prompt() shim so browser-style JS code works in Node.
+            // Save as .cjs to force CommonJS mode regardless of package.json "type": "module"
             const shim = IS_WIN ? JS_PROMPT_SHIM_WIN : JS_PROMPT_SHIM;
-            const fp = path.join(jobDir, "main.js");
+            const fp = path.join(jobDir, "main.cjs");
             await fs.writeFile(fp, shim + "\n" + code);
             command = bin;
-            args = ["main.js"];
+            args = ["main.cjs"];
 
         } else if (normLang === "c") {
             const gcc = (await resolveBinary("gcc")) ?? (await resolveBinary("gcc.exe"));
