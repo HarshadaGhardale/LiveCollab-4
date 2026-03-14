@@ -6,15 +6,7 @@ import { randomBytes } from "crypto";
 
 const execAsync = promisify(exec);
 
-// Map of running interactive sessions
-const activeSessions = new Map<string, any>();
-
-interface ExecutionResult {
-    success: boolean;
-    output: string;
-    error?: string;
-}
-
+const IS_WIN = process.platform === "win32";
 const TIMEOUT_MS = 10000;
 const TEMP_DIR = path.join(process.cwd(), ".temp_execution");
 
@@ -27,27 +19,93 @@ const TEMP_DIR = path.join(process.cwd(), ".temp_execution");
     }
 })();
 
-export async function executeCode(code: string, language: string, input: string = ""): Promise<ExecutionResult> {
-    // This is synchronous REST execution, but interactive runs will use startInteractiveExecution.
-    // We provide a basic fallback here.
+// Cache of resolved absolute binary paths
+const resolvedBinaries: Record<string, string | null> = {};
+
+/**
+ * Resolves the absolute path of a system binary.
+ * Uses `where` on Windows, `which` on Mac/Linux.
+ * Returns null if not found.
+ */
+async function resolveBinary(name: string): Promise<string | null> {
+    if (name in resolvedBinaries) return resolvedBinaries[name];
+    try {
+        const cmd = IS_WIN ? `where ${name}` : `which ${name}`;
+        const { stdout } = await execAsync(cmd);
+        // `where` on Windows may return multiple lines; take the first
+        const resolved = stdout.split(/\r?\n/)[0].trim();
+        resolvedBinaries[name] = resolved || null;
+    } catch {
+        resolvedBinaries[name] = null;
+    }
+    return resolvedBinaries[name];
+}
+
+/** User-friendly error message when a required tool is missing. */
+function missingToolError(tool: string, language: string): string {
+    const hints: Record<string, string> = {
+        python3:  "Linux: sudo apt-get install python3 | Mac: brew install python3 | Windows: https://python.org",
+        python:   "Windows: https://python.org",
+        node:     "All platforms: https://nodejs.org",
+        gcc:      "Linux: sudo apt-get install gcc | Mac: brew install gcc | Windows: https://mingw-w64.org",
+        "g++":    "Linux: sudo apt-get install g++ | Mac: brew install gcc | Windows: https://mingw-w64.org",
+        javac:    "Linux: sudo apt-get install default-jdk | Mac: brew install openjdk | Windows: https://adoptium.net",
+        java:     "Linux: sudo apt-get install default-jre | Mac: brew install openjdk | Windows: https://adoptium.net",
+    };
+    const hint = hints[tool] ?? `Please install '${tool}' on the server.`;
+    return `❌ Cannot run ${language}: '${tool}' is not installed on this server.\r\n💡 ${hint}\r\n`;
+}
+
+// ─── Map of running interactive sessions ──────────────────────────────────────
+const activeSessions = new Map<string, { process: any; timeout: ReturnType<typeof setTimeout> }>();
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function executeCode(): Promise<{ success: boolean; output: string; error?: string }> {
     return { success: false, output: "", error: "Use interactive execution for inputs." };
 }
 
-// ==========================================
-// INTERACTIVE EXECUTION (node-pty / spawn fallback)
-// ==========================================
+/**
+ * JavaScript prompt() shim injected at the top of every JS file so that
+ * code using prompt() in Node.js reads synchronously from stdin.
+ */
+const JS_PROMPT_SHIM = `
+const { execFileSync } = require('child_process');
+function prompt(msg) {
+  if (msg) process.stdout.write(msg);
+  try {
+    // Read one line synchronously from stdin
+    const buf = Buffer.alloc(1024);
+    let total = '';
+    const fd = require('fs').openSync('/dev/stdin', 'rs');
+    while (true) {
+      const n = require('fs').readSync(fd, buf, 0, 1, null);
+      if (n === 0) break;
+      const ch = buf.slice(0, n).toString();
+      total += ch;
+      if (ch === '\\n') break;
+    }
+    return total.trimEnd();
+  } catch { return ''; }
+}
+`;
+
+const JS_PROMPT_SHIM_WIN = `
+function prompt(msg) {
+  if (msg) process.stdout.write(msg);
+  const lines = require('fs').readFileSync('\\\\.\\\\CON').toString();
+  return lines.split('\\n')[0].trimEnd();
+}
+`;
 
 export async function startInteractiveExecution(
     code: string,
     language: string,
     roomId: string,
     onData: (data: string) => void,
-    onExit: (code: number) => void
+    onExit: (code: number) => void,
 ): Promise<string> {
-    // If there's an existing session for this room, kill it
-    if (activeSessions.has(roomId)) {
-        stopInteractiveExecution(roomId);
-    }
+    if (activeSessions.has(roomId)) stopInteractiveExecution(roomId);
 
     const id = randomBytes(4).toString("hex");
     const jobDir = path.join(TEMP_DIR, id);
@@ -55,138 +113,116 @@ export async function startInteractiveExecution(
 
     let command = "";
     let args: string[] = [];
-    let cwd = jobDir;
-
-    // Normalization to catch Piston/Frontend lang names
     const normLang = language.toLowerCase();
 
+    // ── Compile / prepare ─────────────────────────────────────────────────────
     try {
         if (normLang === "python" || normLang === "python3") {
-            const filePath = path.join(jobDir, "main.py");
-            await fs.writeFile(filePath, code);
-            command = "python3";
-            args = ["-u", "main.py"]; // -u for unbuffered output
+            // Try python3 first, fall back to python (Windows)
+            const bin = (await resolveBinary("python3")) ?? (await resolveBinary("python"));
+            if (!bin) throw new Error(missingToolError("python3", "Python"));
+            const fp = path.join(jobDir, "main.py");
+            await fs.writeFile(fp, code);
+            command = bin;
+            args = ["-u", "main.py"]; // -u = unbuffered
+
         } else if (normLang === "javascript" || normLang === "js") {
-            const filePath = path.join(jobDir, "main.js");
-            await fs.writeFile(filePath, code);
-            command = "node";
+            const bin = await resolveBinary("node");
+            if (!bin) throw new Error(missingToolError("node", "JavaScript"));
+            // Inject a prompt() shim so browser-style JS code works in Node
+            const shim = IS_WIN ? JS_PROMPT_SHIM_WIN : JS_PROMPT_SHIM;
+            const fp = path.join(jobDir, "main.js");
+            await fs.writeFile(fp, shim + "\n" + code);
+            command = bin;
             args = ["main.js"];
+
         } else if (normLang === "c") {
-            const sourcePath = path.join(jobDir, "main.c");
-            const outPath = path.join(jobDir, "main.out");
-            await fs.writeFile(sourcePath, code);
+            const gcc = (await resolveBinary("gcc")) ?? (await resolveBinary("gcc.exe"));
+            if (!gcc) throw new Error(missingToolError("gcc", "C"));
+            const src = path.join(jobDir, "main.c");
+            const out = path.join(jobDir, IS_WIN ? "main.exe" : "main.out");
+            await fs.writeFile(src, code);
             try {
-                await execAsync(`gcc "${sourcePath}" -o "${outPath}"`, { timeout: TIMEOUT_MS });
+                await execAsync(`"${gcc}" "${src}" -o "${out}"`, { timeout: TIMEOUT_MS });
             } catch (err: any) {
-                throw new Error(`Compilation error: ${err.stderr || err.message}`);
+                throw new Error(`Compilation error:\r\n${err.stderr || err.message}`);
             }
-            command = outPath;
+            command = out;
+
         } else if (normLang === "cpp" || normLang === "c++") {
-            const sourcePath = path.join(jobDir, "main.cpp");
-            const outPath = path.join(jobDir, "main.out");
-            await fs.writeFile(sourcePath, code);
+            const gpp = (await resolveBinary("g++")) ?? (await resolveBinary("g++.exe"));
+            if (!gpp) throw new Error(missingToolError("g++", "C++"));
+            const src = path.join(jobDir, "main.cpp");
+            const out = path.join(jobDir, IS_WIN ? "main.exe" : "main.out");
+            await fs.writeFile(src, code);
             try {
-                await execAsync(`g++ "${sourcePath}" -o "${outPath}"`, { timeout: TIMEOUT_MS });
+                await execAsync(`"${gpp}" "${src}" -o "${out}"`, { timeout: TIMEOUT_MS });
             } catch (err: any) {
-                throw new Error(`Compilation error: ${err.stderr || err.message}`);
+                throw new Error(`Compilation error:\r\n${err.stderr || err.message}`);
             }
-            command = outPath;
+            command = out;
+
         } else if (normLang === "java") {
-            // Detect the public class name to use as the filename (Java requirement)
-            const classNameMatch = code.match(/public\s+class\s+(\w+)/);
-            const className = classNameMatch ? classNameMatch[1] : "Main";
-            const sourcePath = path.join(jobDir, `${className}.java`);
-            await fs.writeFile(sourcePath, code);
+            const javac = (await resolveBinary("javac")) ?? (await resolveBinary("javac.exe"));
+            if (!javac) throw new Error(missingToolError("javac", "Java"));
+            const javaRt = (await resolveBinary("java")) ?? (await resolveBinary("java.exe"));
+            if (!javaRt) throw new Error(missingToolError("java", "Java"));
+            // Java requires the filename matches the public class name
+            const match = code.match(/public\s+class\s+(\w+)/);
+            const className = match ? match[1] : "Main";
+            const src = path.join(jobDir, `${className}.java`);
+            await fs.writeFile(src, code);
             try {
-                await execAsync(`javac "${sourcePath}"`, { timeout: TIMEOUT_MS });
+                await execAsync(`"${javac}" "${src}"`, { timeout: TIMEOUT_MS });
             } catch (err: any) {
-                throw new Error(`Compilation error: ${err.stderr || err.message}`);
+                throw new Error(`Compilation error:\r\n${err.stderr || err.message}`);
             }
-            command = "java";
+            command = javaRt;
             args = [className];
+
         } else {
             throw new Error(`Language '${language}' is not supported yet.`);
         }
     } catch (err: any) {
-        // Cleanup on compile error
         await fs.rm(jobDir, { recursive: true, force: true }).catch(() => { });
-        throw new Error(err.message || "Compilation failed");
+        throw new Error(err.message ?? "Compilation failed");
     }
 
+    // ── Spawn the process ─────────────────────────────────────────────────────
     let ptyProcess: any;
     try {
-        let executablePath = command;
+        let pty: any;
+        try { pty = require("node-pty"); }
+        catch { const m = await import("node-pty"); pty = (m as any).default ?? m; }
 
-        // For node-pty, we need fully resolved paths or it fails with posix_spawnp
-        if (normLang !== "c" && normLang !== "cpp" && normLang !== "c++") {
-            try {
-                const { stdout } = await execAsync(`which ${command}`);
-                if (stdout.trim()) {
-                    executablePath = stdout.trim();
-                }
-            } catch (e) {
-                // Ignore if which fails
-            }
-        }
-
-        // Try node-pty first
-        let pty;
-        try {
-            pty = require("node-pty");
-        } catch (e) {
-            const ptyModule = await import("node-pty");
-            pty = ptyModule.default || ptyModule;
-        }
-
-        // For C/C++ our command is an absolute path to the out file
-        // To avoid posix_spawnp fail (which happens if bash can't resolve command directly)
-        // We will just directly spawn the executable for c/c++, and spawn 'python3', 'node', 'javac', etc directly.
-        ptyProcess = pty.spawn(executablePath, args, {
+        ptyProcess = pty.spawn(command, args, {
             name: "xterm-color",
-            cols: 80,
-            rows: 24,
-            cwd: cwd,
-            env: process.env
+            cols: 80, rows: 24,
+            cwd: jobDir,
+            env: process.env,
         });
-
-        ptyProcess.onData((data: string) => {
-            onData(data);
-        });
-
-        ptyProcess.onExit((event: { exitCode: number, signal: number }) => {
-            onExit(event.exitCode);
+        ptyProcess.onData((data: string) => onData(data));
+        ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+            onExit(exitCode);
             activeSessions.delete(roomId);
             fs.rm(jobDir, { recursive: true, force: true }).catch(() => { });
         });
+
     } catch (e: any) {
-        console.warn("node-pty not available, falling back to spawn. Reason:", e.message);
+        console.warn("[EXEC] node-pty unavailable, using spawn fallback. Reason:", e.message);
 
-        // Fallback to standard spawn
-        ptyProcess = spawn(command, args, { cwd });
-
-        ptyProcess.stdout.on("data", (data: Buffer) => {
-            // Because fallback spawn doesn't have a PTY, text usually won't flush until the end for C++.
-            onData(data.toString());
-        });
-
-        ptyProcess.stderr.on("data", (data: Buffer) => {
-            onData(data.toString());
-        });
-
+        ptyProcess = spawn(command, args, { cwd: jobDir });
+        ptyProcess.stdout.on("data", (d: Buffer) => onData(d.toString()));
+        ptyProcess.stderr.on("data", (d: Buffer) => onData(d.toString()));
         ptyProcess.on("close", (code: number) => {
             onExit(code ?? 0);
             activeSessions.delete(roomId);
             fs.rm(jobDir, { recursive: true, force: true }).catch(() => { });
         });
-
-        ptyProcess.on("error", (err: Error) => {
-            const missingTool = err.message.includes("ENOENT") ? `Ensure compiler/runtime is installed for '${language}'.` : "";
-            onData(`Process error: ${err.message}\n${missingTool}`);
-        });
-
+        ptyProcess.on("error", (err: Error) => onData(`Process error: ${err.message}\r\n`));
     }
 
-    // Set absolute hard timeout of 30 seconds
+    // Hard 30-second timeout
     const timeout = setTimeout(() => {
         if (activeSessions.has(roomId)) {
             onData("\r\n--- Execution timed out after 30 seconds ---\r\n");
@@ -194,43 +230,24 @@ export async function startInteractiveExecution(
         }
     }, 30000);
 
-    activeSessions.set(roomId, {
-        process: ptyProcess,
-        timeout
-    });
-
+    activeSessions.set(roomId, { process: ptyProcess, timeout });
     return id;
 }
 
 export function writeInteractiveInput(roomId: string, data: string) {
     const session = activeSessions.get(roomId);
-    if (session && session.process) {
-        if (typeof session.process.write === "function") {
-            // It's a node-pty process
-            session.process.write(data);
-        } else if (session.process.stdin) {
-            // It's a standard spawn process
-            try {
-                session.process.stdin.write(data);
-
-                // Native spawn does not echo inputted characters back to stdout like a PTY does. 
-                // We have to simulate the echo so the user can see what they type in the terminal.
-                // Import the SocketServer IO instance or simply rely on the fact that the receiver 
-                // is already emitting this data directly? Actually, wait. Let's just pass an `onEcho` into `startInteractiveExecution` instead.
-            } catch (e) { }
-        }
+    if (!session?.process) return;
+    if (typeof session.process.write === "function") {
+        session.process.write(data);           // node-pty
+    } else if (session.process.stdin) {
+        try { session.process.stdin.write(data); } catch { } // spawn
     }
 }
 
 export function stopInteractiveExecution(roomId: string) {
     const session = activeSessions.get(roomId);
-    if (session) {
-        clearTimeout(session.timeout);
-        if (typeof session.process.kill === "function") {
-            try {
-                session.process.kill("SIGKILL");
-            } catch (e) { }
-        }
-        activeSessions.delete(roomId);
-    }
+    if (!session) return;
+    clearTimeout(session.timeout);
+    try { session.process.kill("SIGKILL"); } catch { }
+    activeSessions.delete(roomId);
 }
