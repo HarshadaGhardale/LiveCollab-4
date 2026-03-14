@@ -62,14 +62,12 @@ export function Terminal({ roomId, onExit }: TerminalProps) {
     socket.on("execute:output", handleOutput);
     socket.on("execute:exit", handleExit);
 
-    // Send user input to backend
+    // Send user input to backend — pass raw data, do NOT convert \r to \r\n.
+    // node-pty's PTY line discipline already converts \r → \n internally.
+    // Sending \r\n would cause TWO newlines reaching the process, consuming
+    // the next input() call immediately with an empty string.
     term.onData((data) => {
-      // If user hit Enter (\r), send CRLF to properly flush PTY
-      if (data === '\r') {
-        socket.emit("execute:input", { roomId, data: '\r\n' });
-      } else {
-        socket.emit("execute:input", { roomId, data });
-      }
+      socket.emit("execute:input", { roomId, data });
     });
 
     // Handle window resize

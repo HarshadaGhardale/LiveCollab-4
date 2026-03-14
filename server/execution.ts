@@ -73,32 +73,38 @@ const JS_PROMPT_SHIM = `
 const fs = require('fs');
 function prompt(msg) {
   if (msg !== undefined) process.stdout.write(String(msg));
-  const buf = Buffer.alloc(4096);
+  const buf = Buffer.alloc(1);
   let result = '';
   try {
-    const fd = fs.openSync('/dev/stdin', 'rs');
+    // Read directly from fd 0 (inherited stdin) - works across multiple prompt() calls
     while (true) {
-      const n = fs.readSync(fd, buf, 0, 1, null);
+      const n = fs.readSync(0, buf, 0, 1, null);
       if (n === 0) break;
-      const ch = buf.slice(0, n).toString();
+      const ch = buf.toString('utf8', 0, n);
       result += ch;
       if (ch === '\\n') break;
     }
-    fs.closeSync(fd);
   } catch { return ''; }
   return result.trimEnd();
 }
 `;
 
 const JS_PROMPT_SHIM_WIN = `
-const readline = require('readline');
+const fs = require('fs');
 function prompt(msg) {
   if (msg !== undefined) process.stdout.write(String(msg));
-  const buf = Buffer.alloc(4096);
+  const buf = Buffer.alloc(1);
+  let result = '';
   try {
-    const n = require('fs').readSync(0, buf, 0, buf.length, null);
-    return buf.slice(0, n).toString().trimEnd();
+    while (true) {
+      const n = fs.readSync(0, buf, 0, 1, null);
+      if (n === 0) break;
+      const ch = buf.toString('utf8', 0, n);
+      result += ch;
+      if (ch === '\\n') break;
+    }
   } catch { return ''; }
+  return result.trimEnd();
 }
 `;
 
