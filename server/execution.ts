@@ -92,7 +92,10 @@ export async function startInteractiveExecution(
             }
             command = outPath;
         } else if (normLang === "java") {
-            const sourcePath = path.join(jobDir, "Main.java");
+            // Detect the public class name to use as the filename (Java requirement)
+            const classNameMatch = code.match(/public\s+class\s+(\w+)/);
+            const className = classNameMatch ? classNameMatch[1] : "Main";
+            const sourcePath = path.join(jobDir, `${className}.java`);
             await fs.writeFile(sourcePath, code);
             try {
                 await execAsync(`javac "${sourcePath}"`, { timeout: TIMEOUT_MS });
@@ -100,7 +103,7 @@ export async function startInteractiveExecution(
                 throw new Error(`Compilation error: ${err.stderr || err.message}`);
             }
             command = "java";
-            args = ["Main"];
+            args = [className];
         } else {
             throw new Error(`Language '${language}' is not supported yet.`);
         }

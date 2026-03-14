@@ -25,7 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useThemeStore, useAuthStore, useEditorStore } from "@/lib/stores";
 import { getSocket, emitCodeEvent } from "@/lib/socket";
 import { apiRequest } from "@/lib/queryClient";
-import JSZip from "jszip";
+import JSZipModule from "jszip";
 import { saveAs } from "file-saver";
 import type { editor } from "monaco-editor";
 
@@ -196,6 +196,8 @@ export function WebEditor({ roomId, initialFiles }: WebEditorProps) {
     };
 
     const handleExport = async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const JSZip = ((JSZipModule as any).default ?? JSZipModule) as typeof JSZipModule;
         const zip = new JSZip();
         Object.entries(files).forEach(([filename, content]) => {
             zip.file(filename, content);
